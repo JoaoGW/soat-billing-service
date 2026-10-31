@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { QuoteDecisionService } from '../../src/application/decidir-orcamento';
 import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -38,6 +39,7 @@ describe('decisão em PostgreSQL', () => {
     expect(events).toHaveLength(1);
     const contractDir = resolve(__dirname, '../../docs/contracts/messages');
     const ajv = new Ajv();
+    addFormats(ajv);
     ajv.addSchema(JSON.parse(readFileSync(resolve(contractDir, 'envelope.schema.json'), 'utf8')));
     const schema = JSON.parse(readFileSync(resolve(contractDir, `${events[0].type}.schema.json`), 'utf8'));
     expect(ajv.validate(schema, events[0].payload)).toBe(true);

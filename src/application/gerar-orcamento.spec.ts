@@ -19,6 +19,11 @@ describe('GenerateQuoteService', () => {
     expect(tx.commandOperation.create).toHaveBeenCalledTimes(1);
   });
 
+  it('propaga contexto de rastreamento para o evento', async () => {
+    await service.execute({ ...command, traceparent: '00-trace', tracestate: 'vendor=state' }, now);
+    expect(tx.outbox.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ payload: expect.objectContaining({ traceparent: '00-trace', tracestate: 'vendor=state' }) }) }));
+  });
+
   it('trata reentrega da operação sem criar orçamento ou notificação novamente', async () => {
     const result = await service.execute(command, now);
     const calls = tx.commandOperation.create.mock.calls as unknown as [{ data: { payloadHash: string } }][];

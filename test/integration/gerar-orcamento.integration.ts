@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
 import { PrismaClient } from '@prisma/client';
 import { GenerateQuoteCommand, GenerateQuoteService } from '../../src/application/gerar-orcamento';
 import { QuoteDecisionService } from '../../src/application/decidir-orcamento';
@@ -30,6 +31,7 @@ describe('geração de orçamento em PostgreSQL', () => {
     const event = await prisma.outbox.findFirstOrThrow({ where: { payload: { path: ['osId'], equals: command.osId } } });
     const dir = resolve(__dirname, '../../docs/contracts/messages');
     const ajv = new Ajv();
+    addFormats(ajv);
     ajv.addSchema(JSON.parse(readFileSync(resolve(dir, 'envelope.schema.json'), 'utf8')));
     expect(ajv.validate(JSON.parse(readFileSync(resolve(dir, `${event.type}.schema.json`), 'utf8')), event.payload)).toBe(true);
     expect(await prisma.inbox.count({ where: { operationId: command.operationId } })).toBe(4);

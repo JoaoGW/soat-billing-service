@@ -9,6 +9,8 @@ export interface GenerateQuoteCommand {
   sagaId: string;
   filialId: string;
   correlationId: string;
+  traceparent?: string;
+  tracestate?: string;
   data: {
     clienteId: string;
     contato: string;
@@ -54,7 +56,7 @@ export class GenerateQuoteService {
           await tx.quote.create({ data: { id: quoteId, osId: command.osId, sagaId: command.sagaId, filialId: command.filialId, clientId: d.clienteId, version: 1, totalInCents: total, currency: 'BRL', status: 'ISSUED', expiresAt: new Date(d.expiresAt), items: { create: d.items.map((item) => ({ id: randomUUID(), sourceId: item.sourceId, itemType: item.itemType, quantity: item.quantity, unitPriceInCents: item.unitPriceInCents, description: item.description || item.sourceId })) } } });
           const messageId = randomUUID();
           const type = 'billing.quote-issued.v1';
-          await tx.outbox.create({ data: { messageId, type, payload: { messageId, type, schemaVersion: 1, occurredAt: now.toISOString(), producer: 'soat-billing-service', aggregateType: 'quote', aggregateId: quoteId, aggregateVersion: 1, osId: command.osId, sagaId: command.sagaId, filialId: command.filialId, correlationId: command.correlationId, causationId: command.messageId, operationId: command.operationId, data: { quoteId, quoteVersion: 1, clientId: d.clienteId, totalInCents: total, currency: 'BRL', expiresAt: d.expiresAt } } } });
+          await tx.outbox.create({ data: { messageId, type, payload: { messageId, type, schemaVersion: 1, occurredAt: now.toISOString(), producer: 'soat-billing-service', aggregateType: 'quote', aggregateId: quoteId, aggregateVersion: 1, osId: command.osId, sagaId: command.sagaId, filialId: command.filialId, correlationId: command.correlationId, causationId: command.messageId, operationId: command.operationId, ...(command.traceparent ? { traceparent: command.traceparent } : {}), ...(command.tracestate ? { tracestate: command.tracestate } : {}), data: { quoteId, quoteVersion: 1, clientId: d.clienteId, totalInCents: total, currency: 'BRL', expiresAt: d.expiresAt } } } });
           await tx.notification.create({ data: { id: randomUUID(), quoteId, recipient: d.contato } });
           await tx.inbox.create({ data: { consumer, messageId: command.messageId, operationId: command.operationId, type: consumer, payload: { ...normalized }, status: 'APPLIED', appliedAt: now } });
           await tx.commandOperation.create({ data: { consumer, operationId: command.operationId, payloadHash, result } });

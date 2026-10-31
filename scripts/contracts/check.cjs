@@ -2,12 +2,14 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 const Ajv = require('ajv');
+const addFormats = require('ajv-formats').default;
 
 const dir = path.resolve(__dirname, '../../docs/contracts/messages');
 const envelope = require(path.join(dir, 'envelope.schema.json'));
 const schema = require(path.join(dir, 'billing.payment-confirmed.v1.schema.json'));
 const example = require(path.join(dir, 'examples/billing.payment-confirmed.v1.json'));
-const ajv = new Ajv({ allErrors: true, schemaId: 'auto' });
+const ajv = new Ajv({ allErrors: true });
+addFormats(ajv);
 ajv.addSchema(envelope);
 const validate = ajv.compile(schema);
 assert.equal(validate(example), true, JSON.stringify(validate.errors));
