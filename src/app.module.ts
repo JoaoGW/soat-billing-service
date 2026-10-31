@@ -2,6 +2,7 @@ import { Controller, Get, Module } from '@nestjs/common';
 import { BillingMessageWorker } from './infrastructure/service-bus/worker';
 import { BillingDatabase } from './infrastructure/billing-database';
 import { QuoteDecisionService } from './application/decidir-orcamento';
+import { QuoteQueryService } from './application/consultar-orcamento';
 import { ClienteGuard } from './interfaces/cliente-guard';
 import { OrcamentoController } from './interfaces/orcamento-controller';
 
@@ -15,6 +16,6 @@ export class HealthController {
 
 @Module({
   controllers: [HealthController, OrcamentoController],
-  providers: [BillingMessageWorker, BillingDatabase, ClienteGuard, { provide: QuoteDecisionService, useFactory: (database: BillingDatabase) => new QuoteDecisionService(database), inject: [BillingDatabase] }],
+  providers: [BillingMessageWorker, BillingDatabase, ClienteGuard, { provide: QuoteDecisionService, useFactory: (database: BillingDatabase) => new QuoteDecisionService(database), inject: [BillingDatabase] }, { provide: QuoteQueryService, useFactory: (database: BillingDatabase) => new QuoteQueryService(database), inject: [BillingDatabase] }],
 })
 export class AppModule {}

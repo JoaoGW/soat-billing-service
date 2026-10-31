@@ -1,13 +1,27 @@
-import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Headers, HttpCode, Inject, NotFoundException, Param, Post, Req, ServiceUnavailableException, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, Headers, HttpCode, Inject, NotFoundException, Param, Post, Req, ServiceUnavailableException, UseGuards } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { QuoteDecisionService } from '../application/decidir-orcamento';
+import { QuoteQueryService } from '../application/consultar-orcamento';
 import { Decision } from '../domain/orcamento';
 import { ClienteGuard, ClienteRequest } from './cliente-guard';
 
 @Controller('orcamentos')
 @UseGuards(ClienteGuard)
 export class OrcamentoController {
-  constructor(@Inject(QuoteDecisionService) private readonly decisions: QuoteDecisionService) {}
+  constructor(@Inject(QuoteDecisionService) private readonly decisions: QuoteDecisionService, @Inject(QuoteQueryService) private readonly queries: QuoteQueryService) {}
+
+  @Get(':id')
+  async get(@Param('id') id: string, @Req() req: ClienteRequest) {
+    if (!id || id.length > 128) throw new BadRequestException('Requisição inválida');
+    try {
+      return await this.queries.execute(id, req.clienteId!);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (message === 'Acesso negado') throw new ForbiddenException();
+      if (message === 'Orçamento não encontrado') throw new NotFoundException();
+      throw new ServiceUnavailableException('Não foi possível consultar o orçamento');
+    }
+  }
 
   @Post(':id/aprovar')
   @HttpCode(200)

@@ -3,12 +3,14 @@ import { Test } from '@nestjs/testing';
 import jwt from 'jsonwebtoken';
 import request from 'supertest';
 import { QuoteDecisionService } from '../application/decidir-orcamento';
+import { QuoteQueryService } from '../application/consultar-orcamento';
 import { ClienteGuard } from './cliente-guard';
 import { OrcamentoController } from './orcamento-controller';
 
 describe('decisão autenticada de orçamento', () => {
   const secret = 'jwt-cliente-de-teste-com-mais-de-32-bytes';
   const decisions = { execute: jest.fn() };
+  const queries = { execute: jest.fn() };
   let app: INestApplication;
   let previousSecret: string | undefined;
   let previousIssuer: string | undefined;
@@ -20,7 +22,7 @@ describe('decisão autenticada de orçamento', () => {
     process.env.JWT_CLIENT_SECRET = secret;
     process.env.JWT_CLIENT_ISSUER = 'soat-auth-function';
     process.env.JWT_CLIENT_AUDIENCE = 'soat-api';
-    const module = await Test.createTestingModule({ controllers: [OrcamentoController], providers: [ClienteGuard, { provide: QuoteDecisionService, useValue: decisions }] }).compile();
+    const module = await Test.createTestingModule({ controllers: [OrcamentoController], providers: [ClienteGuard, { provide: QuoteDecisionService, useValue: decisions }, { provide: QuoteQueryService, useValue: queries }] }).compile();
     app = module.createNestApplication();
     await app.init();
   });
@@ -44,6 +46,16 @@ describe('decisão autenticada de orçamento', () => {
   it('extrai cliente do JWT e passa versão e chave para o serviço', async () => {
     await request(app.getHttpServer()).post('/orcamentos/quote-1/aprovar').set('Authorization', `Bearer ${sign()}`).set('Idempotency-Key', 'key1').send({ versao: 1 }).expect(200);
     expect(decisions.execute).toHaveBeenCalledWith(expect.objectContaining({ quoteId: 'quote-1', clientId: 'cliente-1', version: 1, decision: 'APPROVED', idempotencyKey: 'key1' }));
+  });
+  it('consulta o orçamento com identidade obtida do JWT', async () => {
+    queries.execute.mockResolvedValue({ id: 'quote-1', totalInCents: 100 });
+    const response = await request(app.getHttpServer()).get('/orcamentos/quote-1').set('Authorization', `Bearer ${sign()}`).expect(200);
+    expect(response.body).toEqual({ id: 'quote-1', totalInCents: 100 });
+    expect(queries.execute).toHaveBeenCalledWith('quote-1', 'cliente-1');
+  });
+  it.each([['Acesso negado', 403], ['Orçamento não encontrado', 404], ['erro técnico', 503]])('protege erro de consulta %s', async (message, status) => {
+    queries.execute.mockRejectedValue(new Error(message));
+    await request(app.getHttpServer()).get('/orcamentos/quote-1').set('Authorization', `Bearer ${sign()}`).expect(status);
   });
   it('recusa campos adicionais e solicitações sem chave', async () => {
     await request(app.getHttpServer()).post('/orcamentos/quote-1/recusar').set('Authorization', `Bearer ${sign()}`).set('Idempotency-Key', 'key1').send({ versao: 1, clienteId: 'outro' }).expect(400);
