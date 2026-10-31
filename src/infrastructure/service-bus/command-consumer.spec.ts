@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { ServiceBusReceivedMessage, ServiceBusReceiver } from '@azure/service-bus';
 import { createQuoteCommandValidator, ServiceBusCommandConsumer } from './command-consumer';
+import { QuoteGenerationRejected } from '../../application/gerar-orcamento';
 
 describe('ServiceBusCommandConsumer', () => {
   const validator = createQuoteCommandValidator(resolve(process.cwd(), 'docs/contracts/messages'));
@@ -35,6 +36,12 @@ describe('ServiceBusCommandConsumer', () => {
     await consumer.process(message, receiver as unknown as ServiceBusReceiver);
     expect(receiver.abandonMessage).toHaveBeenCalledWith(message);
     expect(receiver.completeMessage).not.toHaveBeenCalled();
+  });
+  it('confirma falha de negócio já registrada com evento durável', async () => {
+    handler.execute.mockRejectedValue(new QuoteGenerationRejected('EXPIRED'));
+    await consumer.process(message, receiver as unknown as ServiceBusReceiver);
+    expect(receiver.completeMessage).toHaveBeenCalledWith(message);
+    expect(receiver.abandonMessage).not.toHaveBeenCalled();
   });
   it('propaga falha de confirmação sem repetir efeito local', async () => {
     receiver.completeMessage.mockRejectedValue(new Error('lock expirado'));

@@ -13,8 +13,10 @@ pelo consumidor opcional; a decisão ainda não tem API autenticada.
 O despachante da outbox reserva mensagens entre workers, retenta com o mesmo ID
 e registra falhas após cinco tentativas. O adapter Service Bus e o worker usam
 identidade de workload e permanecem desativados por padrão. O caminho local foi
-testado com broker simulado; ainda faltam o spike com Service Bus real, evento
-de falha de negócio e reprocessamento das falhas antes de habilitar o worker.
+testado com broker simulado. Falhas definitivas de prazo e orçamento existente
+geram evento transacional antes do ACK; outros cenários de falha ainda precisam
+ser definidos. Faltam o spike com Service Bus real e reprocessamento operacional
+das falhas antes de habilitar o worker.
 
 Com Node 24: `npm ci`, `npm run lint`, `npm run build`, `npm run test:cov`.
 Para gerar o cliente e aplicar migrations ao banco dedicado configurado em
@@ -23,7 +25,7 @@ Não executar migrations sobre o banco legado.
 `npm run test:integration` exige `DATABASE_URL` para um banco local cujo nome
 termine em `_test`, com migrations aplicadas; não ignora ausência de ambiente.
 
-Pendentes: APIs e autorização, emissão de evento para falhas definitivas,
+Pendentes: APIs e autorização, cobertura das demais falhas definitivas,
 worker de notificações, teste real do Service Bus, Orders API e webhook Mercado
 Pago, reconciliação,
 Sonar, deploy automatizado, instrumentação e testes distribuídos.

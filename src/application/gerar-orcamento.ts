@@ -21,6 +21,13 @@ export interface GenerateQuoteCommand {
   };
 }
 
+export type QuoteRejectionReason = 'EXPIRED' | 'ALREADY_EXISTS';
+export class QuoteGenerationRejected extends Error {
+  constructor(readonly reason: QuoteRejectionReason) {
+    super(reason === 'EXPIRED' ? 'Comando expirado' : 'Orçamento já existente para a OS');
+  }
+}
+
 export class GenerateQuoteService {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -38,19 +45,27 @@ export class GenerateQuoteService {
 
     for (let attempt = 0; ; attempt++) {
       try {
-        return await this.prisma.$transaction(async (tx) => {
+        const outcome = await this.prisma.$transaction(async (tx): Promise<{ quoteId: string; version: number } | { rejected: QuoteRejectionReason }> => {
           const priorMessage = await tx.inbox.findUnique({ where: { consumer_messageId: { consumer, messageId: command.messageId } } });
           if (priorMessage && priorMessage.operationId !== command.operationId) throw new Error('Mensagem reutilizada em outra operação');
           const priorOperation = await tx.commandOperation.findUnique({ where: { consumer_operationId: { consumer, operationId: command.operationId } } });
           if (priorOperation) {
             if (priorOperation.payloadHash !== payloadHash) throw new Error('Operação reutilizada com outro conteúdo');
             if (!priorMessage) await tx.inbox.create({ data: { consumer, messageId: command.messageId, operationId: command.operationId, type: consumer, payload: { ...normalized }, status: 'APPLIED', appliedAt: now } });
-            return priorOperation.result as { quoteId: string; version: number };
+            return priorOperation.result as { quoteId: string; version: number } | { rejected: QuoteRejectionReason };
           }
           if (priorMessage) throw new Error('Mensagem sem operação correspondente');
-          if (new Date(d.expiresAt) <= now) throw new Error('Comando expirado');
           const existing = await tx.quote.findFirst({ where: { osId: command.osId }, select: { id: true } });
-          if (existing) throw new Error('Orçamento já existente para a OS');
+          const reason: QuoteRejectionReason | undefined = new Date(d.expiresAt) <= now ? 'EXPIRED' : existing ? 'ALREADY_EXISTS' : undefined;
+          if (reason) {
+            const messageId = randomUUID();
+            const type = 'billing.quote-failed.v1';
+            const result = { rejected: reason };
+            await tx.outbox.create({ data: { messageId, type, payload: { messageId, type, schemaVersion: 1, occurredAt: now.toISOString(), producer: 'soat-billing-service', aggregateType: 'quote-command', aggregateId: command.operationId, aggregateVersion: 1, osId: command.osId, sagaId: command.sagaId, filialId: command.filialId, correlationId: command.correlationId, causationId: command.messageId, operationId: command.operationId, ...(command.traceparent ? { traceparent: command.traceparent } : {}), ...(command.tracestate ? { tracestate: command.tracestate } : {}), data: { reasonCode: reason, diagnosisId: d.diagnosisId, diagnosisVersion: d.diagnosisVersion } } } });
+            await tx.inbox.create({ data: { consumer, messageId: command.messageId, operationId: command.operationId, type: consumer, payload: { ...normalized }, status: 'APPLIED', appliedAt: now } });
+            await tx.commandOperation.create({ data: { consumer, operationId: command.operationId, payloadHash, result } });
+            return result;
+          }
           const quoteId = randomUUID();
           const result = { quoteId, version: 1 };
           await tx.quote.create({ data: { id: quoteId, osId: command.osId, sagaId: command.sagaId, filialId: command.filialId, clientId: d.clienteId, version: 1, totalInCents: total, currency: 'BRL', status: 'ISSUED', expiresAt: new Date(d.expiresAt), items: { create: d.items.map((item) => ({ id: randomUUID(), sourceId: item.sourceId, itemType: item.itemType, quantity: item.quantity, unitPriceInCents: item.unitPriceInCents, description: item.description || item.sourceId })) } } });
@@ -62,6 +77,8 @@ export class GenerateQuoteService {
           await tx.commandOperation.create({ data: { consumer, operationId: command.operationId, payloadHash, result } });
           return result;
         }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        if ('rejected' in outcome) throw new QuoteGenerationRejected(outcome.rejected);
+        return outcome;
       } catch (error) {
         const e = error as { code?: string; meta?: { code?: string } } | null;
         if (attempt < 4 && (e?.code === 'P2034' || e?.code === 'P2002' || (e?.code === 'P2010' && ['40001', '40P01'].includes(e.meta?.code ?? '')))) {

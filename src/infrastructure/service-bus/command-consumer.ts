@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 import { ServiceBusReceivedMessage, ServiceBusReceiver } from '@azure/service-bus';
-import { GenerateQuoteCommand } from '../../application/gerar-orcamento';
+import { GenerateQuoteCommand, QuoteGenerationRejected } from '../../application/gerar-orcamento';
 
 type QuoteCommandHandler = { execute(command: GenerateQuoteCommand): Promise<unknown> };
 type Receiver = Pick<ServiceBusReceiver, 'completeMessage' | 'abandonMessage' | 'deadLetterMessage'>;
@@ -29,7 +29,13 @@ export class ServiceBusCommandConsumer {
     }
     try {
       await this.handler.execute(body as GenerateQuoteCommand);
-    } catch {
+    } catch (error) {
+      // Known business rejections are already recorded atomically with the
+      // failure event and inbox; retrying would not change the result.
+      if (error instanceof QuoteGenerationRejected) {
+        await receiver.completeMessage(message);
+        return;
+      }
       // Broker delivery limits determine DLQ; never acknowledge a failed commit.
       await receiver.abandonMessage(message);
       return;
