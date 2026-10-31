@@ -9,7 +9,9 @@ temporário. As funções de domínio testam valores inteiros e decisões por cl
 e versão. A operação interna de decisão grava CAS, decisão, idempotência e
 outbox na mesma transação SQL. A geração interna grava orçamento, itens, inbox,
 operação, evento e tarefa de notificação em uma transação. A geração é chamada
-pelo consumidor opcional; a decisão ainda não tem API autenticada.
+pelo consumidor opcional. `POST /orcamentos/:id/aprovar` e
+`POST /orcamentos/:id/recusar` exigem JWT de cliente, `Idempotency-Key` e
+corpo `{ "versao": 1 }`; o cliente é obtido do token e validado no orçamento.
 O despachante da outbox reserva mensagens entre workers, retenta com o mesmo ID
 e registra falhas após cinco tentativas. O adapter Service Bus e o worker usam
 identidade de workload e permanecem desativados por padrão. O caminho local foi
@@ -25,7 +27,7 @@ Não executar migrations sobre o banco legado.
 `npm run test:integration` exige `DATABASE_URL` para um banco local cujo nome
 termine em `_test`, com migrations aplicadas; não ignora ausência de ambiente.
 
-Pendentes: APIs e autorização, cobertura das demais falhas definitivas,
+Pendentes: consultas REST, cobertura das demais falhas definitivas,
 worker de notificações, teste real do Service Bus, Orders API e webhook Mercado
 Pago, reconciliação,
 Sonar, deploy automatizado, instrumentação e testes distribuídos.

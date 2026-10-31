@@ -1,5 +1,9 @@
 import { Controller, Get, Module } from '@nestjs/common';
 import { BillingMessageWorker } from './infrastructure/service-bus/worker';
+import { BillingDatabase } from './infrastructure/billing-database';
+import { QuoteDecisionService } from './application/decidir-orcamento';
+import { ClienteGuard } from './interfaces/cliente-guard';
+import { OrcamentoController } from './interfaces/orcamento-controller';
 
 @Controller()
 export class HealthController {
@@ -9,5 +13,8 @@ export class HealthController {
   }
 }
 
-@Module({ controllers: [HealthController], providers: [BillingMessageWorker] })
+@Module({
+  controllers: [HealthController, OrcamentoController],
+  providers: [BillingMessageWorker, BillingDatabase, ClienteGuard, { provide: QuoteDecisionService, useFactory: (database: BillingDatabase) => new QuoteDecisionService(database), inject: [BillingDatabase] }],
+})
 export class AppModule {}
