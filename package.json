@@ -10,6 +10,7 @@
     "lint": "eslint 'src/**/*.ts'",
     "test:unit": "jest --runInBand",
     "test:contracts": "node scripts/contracts/check.cjs",
+    "test:integration": "jest --config jest.integration.cjs --runInBand --watchman=false",
     "test:cov": "jest --runInBand --coverage",
     "start:prod": "node dist/main.js",
     "db:generate": "prisma generate --schema prisma/schema.prisma",

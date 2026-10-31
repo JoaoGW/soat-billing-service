@@ -4,7 +4,8 @@ COPY package*.json ./
 RUN npm ci
 COPY tsconfig*.json ./
 COPY src ./src
-RUN npm run build && npm prune --omit=dev
+COPY prisma ./prisma
+RUN npm run db:generate && npm run build && npm prune --omit=dev
 
 FROM node:24-alpine AS runtime
 ENV NODE_ENV=production
