@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const fs = require('node:fs');
 const Ajv = require('ajv');
 
 const dir = path.resolve(__dirname, '../../docs/contracts/messages');
@@ -20,3 +21,12 @@ for (const invalid of [
   assert.equal(validate(invalid), false, 'contrato inválido foi aceito');
 }
 console.log('Contrato payment-confirmed v1: exemplo e casos inválidos verificados.');
+for (const filename of fs.readdirSync(dir).filter((name) => name.endsWith('.v1.schema.json') && name !== 'billing.payment-confirmed.v1.schema.json')) {
+  const name = filename.replace('.schema.json', '');
+  const contract = ajv.compile(require(path.join(dir, filename)));
+  const fixture = require(path.join(dir, 'examples', `${name}.json`));
+  assert.equal(contract(fixture), true, `${name}: ${JSON.stringify(contract.errors)}`);
+  assert.equal(contract({ ...fixture, producer: 'servico-incorreto' }), false, `${name}: produtor inválido aceito`);
+  assert.equal(contract({ ...fixture, data: {} }), false, `${name}: dados incompletos aceitos`);
+  console.log(`${name}: exemplo e casos inválidos verificados.`);
+}

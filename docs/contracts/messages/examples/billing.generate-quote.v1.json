@@ -1,0 +1,31 @@
+{
+  "messageId": "message-001",
+  "type": "billing.generate-quote.v1",
+  "schemaVersion": 1,
+  "occurredAt": "2026-10-30T15:00:00Z",
+  "producer": "soat-os-service",
+  "aggregateType": "saga",
+  "aggregateId": "saga-001",
+  "aggregateVersion": 1,
+  "osId": "os-001",
+  "sagaId": "saga-001",
+  "filialId": "filial-001",
+  "correlationId": "correlation-001",
+  "causationId": "message-000",
+  "operationId": "operation-001",
+  "data": {
+    "clienteId": "cliente-001",
+    "contato": "cliente@example.test",
+    "diagnosisId": "diagnostico-001",
+    "diagnosisVersion": 1,
+    "expiresAt": "2030-01-02T00:00:00Z",
+    "items": [
+      {
+        "sourceId": "peca-001",
+        "itemType": "PART",
+        "quantity": 1,
+        "unitPriceInCents": 15000
+      }
+    ]
+  }
+}

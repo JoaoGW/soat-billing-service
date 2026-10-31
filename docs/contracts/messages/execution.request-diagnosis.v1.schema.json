@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://soat.example/contracts/messages/execution.request-diagnosis.v1.schema.json",
+  "allOf": [
+    { "$ref": "https://soat.example/contracts/messages/envelope.v1.schema.json" },
+    {
+      "type": "object",
+      "properties": {
+        "type": { "const": "execution.request-diagnosis.v1" },
+        "producer": { "const": "soat-os-service" },
+        "data": {
+          "type": "object",
+          "required": ["veiculoId"],
+          "properties": {
+            "veiculoId": { "type": "string", "minLength": 1 },
+            "solicitacoes": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          }
+        }
+      }
+    }
+  ]
+}
