@@ -5,6 +5,7 @@ import { QuoteDecisionService } from './application/decidir-orcamento';
 import { QuoteQueryService } from './application/consultar-orcamento';
 import { ClienteGuard } from './interfaces/cliente-guard';
 import { OrcamentoController } from './interfaces/orcamento-controller';
+import { BillingNotificationWorker } from './infrastructure/email/worker';
 
 @Controller()
 export class HealthController {
@@ -16,6 +17,6 @@ export class HealthController {
 
 @Module({
   controllers: [HealthController, OrcamentoController],
-  providers: [BillingMessageWorker, BillingDatabase, ClienteGuard, { provide: QuoteDecisionService, useFactory: (database: BillingDatabase) => new QuoteDecisionService(database), inject: [BillingDatabase] }, { provide: QuoteQueryService, useFactory: (database: BillingDatabase) => new QuoteQueryService(database), inject: [BillingDatabase] }],
+  providers: [BillingMessageWorker, BillingNotificationWorker, BillingDatabase, ClienteGuard, { provide: QuoteDecisionService, useFactory: (database: BillingDatabase) => new QuoteDecisionService(database), inject: [BillingDatabase] }, { provide: QuoteQueryService, useFactory: (database: BillingDatabase) => new QuoteQueryService(database), inject: [BillingDatabase] }],
 })
 export class AppModule {}

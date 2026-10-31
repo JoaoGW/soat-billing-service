@@ -9,9 +9,9 @@ temporário. As funções de domínio testam valores inteiros e decisões por cl
 e versão. A operação interna de decisão grava CAS, decisão, idempotência e
 outbox na mesma transação SQL. A geração interna grava orçamento, itens, inbox,
 operação, evento e tarefa de notificação em uma transação. A geração é chamada
-pelo consumidor opcional. `GET /orcamentos/:id`, `POST /orcamentos/:id/aprovar` e
-`POST /orcamentos/:id/recusar` exigem JWT de cliente, `Idempotency-Key` e
-corpo `{ "versao": 1 }`; o cliente é obtido do token e validado no orçamento.
+pelo consumidor opcional. `GET /orcamentos/:id` e os POSTs de aprovação e
+recusa exigem JWT de cliente. Os POSTs também exigem `Idempotency-Key` e corpo
+`{ "versao": 1 }`; o cliente é obtido do token e validado no orçamento.
 O despachante da outbox reserva mensagens entre workers, retenta com o mesmo ID
 e registra falhas após cinco tentativas. O adapter Service Bus e o worker usam
 identidade de workload e permanecem desativados por padrão. O caminho local foi
@@ -19,6 +19,10 @@ testado com broker simulado. Falhas definitivas de prazo e orçamento existente
 geram evento transacional antes do ACK; outros cenários de falha ainda precisam
 ser definidos. Faltam o spike com Service Bus real e reprocessamento operacional
 das falhas antes de habilitar o worker.
+O worker SMTP também é desativado por padrão e exige TLS; ele usa ID de
+mensagem estável, mas uma falha após aceitação pelo servidor pode provocar
+reenvio. Não há garantia de deduplicação na caixa de entrada. Notificações de
+orçamentos já decididos ou expirados são ignoradas.
 
 Com Node 24: `npm ci`, `npm run lint`, `npm run build`, `npm run test:cov`.
 Para gerar o cliente e aplicar migrations ao banco dedicado configurado em
@@ -28,6 +32,6 @@ Não executar migrations sobre o banco legado.
 termine em `_test`, com migrations aplicadas; não ignora ausência de ambiente.
 
 Pendentes: consultas de cobrança, cobertura das demais falhas definitivas,
-worker de notificações, teste real do Service Bus, Orders API e webhook Mercado
+reprocessamento operacional e teste real do SMTP e Service Bus, Orders API e webhook Mercado
 Pago, reconciliação,
 Sonar, deploy automatizado, instrumentação e testes distribuídos.
