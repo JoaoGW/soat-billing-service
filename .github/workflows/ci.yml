@@ -18,6 +18,7 @@ jobs:
       - run: npm run lint
       - run: npm run build
       - run: npm run test:cov -- --watchman=false
+      - run: npm run test:contracts
       - run: kubectl kustomize deploy/kustomize/overlays/hml > /tmp/service-hml.yaml
       - uses: actions/upload-artifact@v4
         with:

@@ -2,11 +2,14 @@
   "name": "soat-billing-service",
   "version": "0.1.0",
   "private": true,
-  "engines": { "node": ">=24 <25" },
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint 'src/**/*.ts'",
     "test:unit": "jest --runInBand",
+    "test:contracts": "node scripts/contracts/check.cjs",
     "test:cov": "jest --runInBand --coverage",
     "start:prod": "node dist/main.js",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
@@ -24,6 +27,7 @@
     "@eslint/js": "^9.18.0",
     "@types/jest": "^29.5.14",
     "@types/node": "^22.10.7",
+    "ajv": "6.12.6",
     "eslint": "^9.18.0",
     "globals": "^15.14.0",
     "jest": "^29.7.0",
