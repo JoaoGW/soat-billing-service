@@ -10,6 +10,9 @@ e versão. A operação interna de decisão grava CAS, decisão, idempotência e
 outbox na mesma transação SQL. A geração interna grava orçamento, itens, inbox,
 operação, evento e tarefa de notificação em uma transação. Essas operações ainda
 não estão ligadas a uma API autenticada ou consumidor de mensageria.
+O despachante da outbox reserva mensagens entre workers, retenta com o mesmo ID
+e registra falhas após cinco tentativas; falta conectar o publicador ao broker e
+implementar o procedimento de reprocessamento das falhas.
 
 Com Node 24: `npm ci`, `npm run lint`, `npm run build`, `npm run test:cov`.
 Para gerar o cliente e aplicar migrations ao banco dedicado configurado em
