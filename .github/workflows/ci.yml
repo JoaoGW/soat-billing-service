@@ -1,0 +1,25 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main, development]
+permissions:
+  contents: read
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run test:cov -- --watchman=false
+      - run: kubectl kustomize deploy/kustomize/overlays/hml > /tmp/service-hml.yaml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/

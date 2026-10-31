@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: soat-billing-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: soat-billing-service
+  template:
+    metadata:
+      labels:
+        app: soat-billing-service
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: soat-billing-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: api
+          image: ghcr.io/joaogw/soat-billing-service:sha-not-set
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: soat-billing-service
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

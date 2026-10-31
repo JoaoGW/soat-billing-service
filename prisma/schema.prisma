@@ -1,0 +1,162 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Quote {
+  id           String         @id
+  osId         String
+  sagaId       String
+  filialId     String
+  clientId     String
+  version      Int
+  revision     Int            @default(0)
+  totalInCents Int
+  currency     String         @default("BRL")
+  status       String
+  expiresAt    DateTime
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  items        QuoteItem[]
+  decision     QuoteDecision?
+  charges      Charge[]
+
+  @@unique([osId, version])
+}
+
+model QuoteItem {
+  id               String @id
+  quoteId          String
+  itemType         String
+  sourceId         String
+  description      String
+  quantity         Int
+  unitPriceInCents Int
+  quote            Quote  @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+
+  @@index([quoteId])
+}
+
+model QuoteDecision {
+  quoteId   String   @id
+  actorId   String
+  decision  String
+  createdAt DateTime @default(now())
+  quote     Quote    @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+}
+
+model Charge {
+  id                String          @id
+  quoteId           String
+  osId              String
+  status            String
+  amountInCents     Int
+  currency          String          @default("BRL")
+  externalReference String          @unique
+  providerOrderId   String?         @unique
+  expiresAt         DateTime
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  quote             Quote           @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+  attempts          ChargeAttempt[]
+  payments          Payment[]
+
+  @@index([osId])
+}
+
+model ChargeAttempt {
+  id          String   @id
+  chargeId    String
+  operationId String   @unique
+  providerKey String   @unique
+  status      String
+  result      Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  charge      Charge   @relation(fields: [chargeId], references: [id], onDelete: Restrict)
+
+  @@index([chargeId])
+}
+
+model Payment {
+  id                String   @id
+  chargeId          String
+  providerPaymentId String   @unique
+  amountInCents     Int
+  currency          String
+  paidAt            DateTime
+  charge            Charge   @relation(fields: [chargeId], references: [id], onDelete: Restrict)
+  refunds           Refund[]
+
+  @@index([chargeId])
+}
+
+model Refund {
+  id               String   @id
+  paymentId        String
+  operationId      String   @unique
+  providerRefundId String?  @unique
+  status           String
+  amountInCents    Int
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  payment          Payment  @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@index([paymentId])
+}
+
+model ReceivedWebhook {
+  provider   String
+  eventId    String
+  payload    Json
+  status     String
+  receivedAt DateTime @default(now())
+
+  @@id([provider, eventId])
+}
+
+model Inbox {
+  consumer    String
+  messageId   String
+  operationId String
+  type        String
+  payload     Json
+  status      String
+  receivedAt  DateTime  @default(now())
+  appliedAt   DateTime?
+
+  @@id([consumer, messageId])
+  @@index([operationId])
+  @@index([status, receivedAt])
+}
+
+model Outbox {
+  messageId     String    @id
+  type          String
+  payload       Json
+  status        String    @default("PENDING")
+  attemptCount  Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  claimUntil    DateTime?
+  claimOwner    String?
+  createdAt     DateTime  @default(now())
+  publishedAt   DateTime?
+
+  @@index([status, nextAttemptAt])
+}
+
+model IdempotencyRequest {
+  actorId     String
+  route       String
+  key         String
+  requestHash String
+  statusCode  Int
+  response    Json
+  createdAt   DateTime @default(now())
+
+  @@id([actorId, route, key])
+}
