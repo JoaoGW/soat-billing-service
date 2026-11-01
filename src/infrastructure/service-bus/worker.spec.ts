@@ -12,7 +12,7 @@ jest.mock('../../application/publicar-outbox');
 describe('BillingMessageWorker', () => {
   const originalEnv = process.env;
   const closeSubscription = jest.fn().mockResolvedValue(undefined);
-  const receiver = { subscribe: jest.fn(), close: jest.fn().mockResolvedValue(undefined) };
+  const receiver = { subscribe: jest.fn(), close: jest.fn().mockResolvedValue(undefined), abandonMessage: jest.fn().mockResolvedValue(undefined), deadLetterMessage: jest.fn().mockResolvedValue(undefined) };
   const sender = { close: jest.fn().mockResolvedValue(undefined) };
   const client = { createSender: jest.fn(), createReceiver: jest.fn(), close: jest.fn().mockResolvedValue(undefined) };
   const prisma = { $disconnect: jest.fn().mockResolvedValue(undefined) };
@@ -20,7 +20,8 @@ describe('BillingMessageWorker', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env = { ...originalEnv, ENABLE_SERVICE_BUS_WORKER: 'false' };
+    process.env = { ...originalEnv, ENABLE_SERVICE_BUS_WORKER: 'false', ENABLE_MERCADO_PAGO_COMMANDS: 'false' };
+    delete process.env.MERCADO_PAGO_ACCESS_TOKEN;
     receiver.subscribe.mockReturnValue({ close: closeSubscription });
     client.createSender.mockReturnValue(sender);
     client.createReceiver.mockReturnValue(receiver);
@@ -61,6 +62,28 @@ describe('BillingMessageWorker', () => {
     expect(sender.close).toHaveBeenCalled();
     expect(client.close).toHaveBeenCalled();
     expect(prisma.$disconnect).toHaveBeenCalled();
+  });
+
+  it('não envia cobrança quando integração está desativada', async () => {
+    Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
+    const worker = new BillingMessageWorker(); worker.onModuleInit();
+    const handlers = receiver.subscribe.mock.calls[0][0] as { processMessage(message: unknown): Promise<void> };
+    const message = { subject: 'billing.create-charge.v1', body: {} };
+    await handlers.processMessage(message);
+    expect(receiver.abandonMessage).toHaveBeenCalledWith(message);
+    await worker.onApplicationShutdown();
+  });
+  it('exige token somente quando cobrança é explicitamente habilitada', () => {
+    Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_MERCADO_PAGO_COMMANDS: 'true', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
+    expect(() => new BillingMessageWorker().onModuleInit()).toThrow('Mercado Pago');
+  });
+  it('direciona comando de cobrança inválido ao consumidor habilitado', async () => {
+    Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_MERCADO_PAGO_COMMANDS: 'true', MERCADO_PAGO_ACCESS_TOKEN: 'test-token', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
+    const worker = new BillingMessageWorker(); worker.onModuleInit();
+    const handlers = receiver.subscribe.mock.calls[0][0] as { processMessage(message: unknown): Promise<void> };
+    await handlers.processMessage({ subject: 'billing.create-charge.v1', body: {} });
+    expect(receiver.deadLetterMessage).toHaveBeenCalledTimes(1);
+    await worker.onApplicationShutdown();
   });
 
   it('encerra os demais recursos mesmo se fechar a assinatura falhar', async () => {

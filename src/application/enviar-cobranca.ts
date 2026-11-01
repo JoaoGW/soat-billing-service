@@ -1,8 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { CreateQrOrder } from '../infrastructure/mercado-pago/orders-client';
 
 type Provider = { create(input: CreateQrOrder): Promise<Record<string, unknown>> };
-type IntentResult = { fingerprint: string; externalPosId: string };
+type IntentResult = { fingerprint: string; externalPosId: string; messageId: string; correlationId: string; sagaId: string; filialId: string; quoteId: string; quoteVersion: number; clientId: string; reservationId: string; traceparent?: string; tracestate?: string };
 type Outcome = 'CREATED' | 'IN_FLIGHT' | 'RECONCILIACAO_NECESSARIA' | 'EXPIRED';
 
 /** A committed claim precedes the network call. IN_FLIGHT is never automatically resent. */
@@ -15,7 +16,7 @@ export class SubmitChargeService {
     if (!attempt) throw new Error('Intenção não encontrada');
     if (attempt.status !== 'INTENT_RECORDED') return this.existing(attempt.status);
     const intent = attempt.result as IntentResult | null;
-    if (!intent || typeof intent.fingerprint !== 'string' || typeof intent.externalPosId !== 'string') throw new Error('Intenção inválida');
+    if (!intent || [intent.fingerprint, intent.externalPosId, intent.messageId, intent.correlationId, intent.sagaId, intent.filialId, intent.quoteId, intent.clientId, intent.reservationId].some((value) => typeof value !== 'string' || !value) || !Number.isSafeInteger(intent.quoteVersion)) throw new Error('Intenção inválida');
     const remainingMinutes = Math.floor((attempt.charge.expiresAt.getTime() - now.getTime()) / 60000);
     const claimStatus = remainingMinutes < 1 ? 'EXPIRED' : 'IN_FLIGHT';
     const claimed = await this.db.$transaction(async (tx) => {
@@ -23,6 +24,17 @@ export class SubmitChargeService {
       if (!charge.count) return false;
       const updated = await tx.chargeAttempt.updateMany({ where: { id: attempt.id, status: 'INTENT_RECORDED' }, data: { status: claimStatus } });
       if (!updated.count) throw new Error('Estado da intenção inconsistente');
+      if (claimStatus === 'EXPIRED') {
+        const messageId = randomUUID(); const type = 'billing.charge-failed.v1';
+        await tx.outbox.create({ data: { messageId, type, payload: {
+          messageId, type, schemaVersion: 1, occurredAt: now.toISOString(), producer: 'soat-billing-service',
+          aggregateType: 'charge', aggregateId: attempt.chargeId, aggregateVersion: 1,
+          osId: attempt.charge.osId, sagaId: intent.sagaId, filialId: intent.filialId,
+          correlationId: intent.correlationId, causationId: intent.messageId, operationId,
+          ...(intent.traceparent ? { traceparent: intent.traceparent } : {}), ...(intent.tracestate ? { tracestate: intent.tracestate } : {}),
+          data: { quoteId: intent.quoteId, quoteVersion: intent.quoteVersion, chargeId: attempt.chargeId, reservationId: intent.reservationId, reasonCode: 'EXPIRED' },
+        } } });
+      }
       return true;
     });
     if (!claimed) return 'IN_FLIGHT';
@@ -45,6 +57,19 @@ export class SubmitChargeService {
       const updated = await tx.chargeAttempt.updateMany({ where: { id: attempt.id, status: 'IN_FLIGHT' }, data: { status: 'CREATED', result: { ...intent, qrData: qr.qr_data } } });
       if (!updated.count) throw new Error('Operação de cobrança mudou durante o envio');
       await tx.charge.update({ where: { id: attempt.chargeId }, data: { status: 'CREATED', providerOrderId: response.id as string } });
+      const messageId = randomUUID();
+      const type = 'billing.charge-created.v1';
+      await tx.outbox.create({ data: { messageId, type, payload: {
+        messageId, type, schemaVersion: 1, occurredAt: now.toISOString(), producer: 'soat-billing-service',
+        aggregateType: 'charge', aggregateId: attempt.chargeId, aggregateVersion: 1,
+        osId: attempt.charge.osId, sagaId: intent.sagaId, filialId: intent.filialId,
+        correlationId: intent.correlationId, causationId: intent.messageId, operationId,
+        ...(intent.traceparent ? { traceparent: intent.traceparent } : {}), ...(intent.tracestate ? { tracestate: intent.tracestate } : {}),
+        data: { quoteId: intent.quoteId, quoteVersion: intent.quoteVersion, chargeId: attempt.chargeId,
+          clientId: intent.clientId, totalInCents: attempt.charge.amountInCents, currency: attempt.charge.currency,
+          providerOrderId: response.id as string, externalReference: attempt.charge.externalReference,
+          expiresAt: attempt.charge.expiresAt.toISOString(), reservationId: intent.reservationId },
+      } } });
     });
     return 'CREATED';
   }

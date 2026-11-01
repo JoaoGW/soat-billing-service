@@ -7,6 +7,10 @@ import { GenerateQuoteService } from '../../application/gerar-orcamento';
 import { OutboxDispatcher } from '../../application/publicar-outbox';
 import { createQuoteCommandValidator, ServiceBusCommandConsumer } from './command-consumer';
 import { ServiceBusEventPublisher } from './event-publisher';
+import { ChargeCommandConsumer, createChargeCommandValidator } from './charge-consumer';
+import { PrepareChargeService } from '../../application/preparar-cobranca';
+import { SubmitChargeService } from '../../application/enviar-cobranca';
+import { MercadoPagoOrdersClient } from '../mercado-pago/orders-client';
 
 @Injectable()
 export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown {
@@ -32,6 +36,10 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
       throw new Error('Configuração incompleta do worker Service Bus');
     }
     const validator = createQuoteCommandValidator(resolve(process.cwd(), 'docs/contracts/messages'));
+    const chargeEnabled = process.env.ENABLE_MERCADO_PAGO_COMMANDS === 'true';
+    const token = process.env.MERCADO_PAGO_ACCESS_TOKEN;
+    if (chargeEnabled && !token) throw new Error('Configuração incompleta do Mercado Pago');
+    const chargeValidator = chargeEnabled ? createChargeCommandValidator(resolve(process.cwd(), 'docs/contracts/messages')) : undefined;
     this.prisma = new PrismaClient();
     this.client = new ServiceBusClient(namespace, new WorkloadIdentityCredential());
     this.sender = this.client.createSender(topic);
@@ -39,8 +47,17 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
     this.dispatcher = new OutboxDispatcher(this.prisma, new ServiceBusEventPublisher(this.sender));
     const receiver = this.receiver;
     const consumer = new ServiceBusCommandConsumer(new GenerateQuoteService(this.prisma), validator);
+    const chargeConsumer = chargeEnabled && token && chargeValidator
+      ? new ChargeCommandConsumer(new PrepareChargeService(this.prisma), new SubmitChargeService(this.prisma, new MercadoPagoOrdersClient(token)), chargeValidator)
+      : undefined;
     this.subscription = receiver.subscribe({
-      processMessage: (message) => consumer.process(message, receiver),
+      processMessage: (message) => {
+        const isCharge = message.subject === 'billing.create-charge.v1' ||
+          (message.body && typeof message.body === 'object' && message.body.type === 'billing.create-charge.v1');
+        if (!isCharge) return consumer.process(message, receiver);
+        if (!chargeConsumer) return receiver.abandonMessage(message);
+        return chargeConsumer.process(message, receiver);
+      },
       processError: async (args) => { this.logger.error(`Falha no transporte Service Bus: ${args.errorSource}`); },
     }, { autoCompleteMessages: false, maxConcurrentCalls: 1 });
     this.active = this.poll();

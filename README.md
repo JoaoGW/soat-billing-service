@@ -33,8 +33,16 @@ termine em `_test`, com migrations aplicadas; não ignora ausência de ambiente.
 
 A intenção de cobrança é gravada com chave idempotente antes do envio. O envio
 reivindica a intenção, não repete operações em voo e sinaliza reconciliação em
-caso de resposta incerta. Os dois serviços ainda não estão ligados a mensagens
-ou endpoints; o evento de cobrança e a reconciliação operacional faltam.
+caso de resposta incerta. O consumidor opcional grava inbox e emite evento de
+cobrança criada na mesma transação da confirmação local. Prazo vencido produz
+evento de falha antes do ACK. Outros resultados incertos permanecem para retry
+e reconciliação; esgotadas as tentativas, seguem para a DLQ. Ainda falta uma
+ferramenta operacional de reconciliação e tratamento das demais falhas.
+
+O consumidor de cobrança exige `ENABLE_SERVICE_BUS_WORKER=true`,
+`ENABLE_MERCADO_PAGO_COMMANDS=true` e `MERCADO_PAGO_ACCESS_TOKEN`; ambos os
+workers e o comando financeiro permanecem desativados por padrão. Não habilitar
+até validar os fluxos e credenciais em ambiente de teste.
 
 O adapter de Orders API prepara criação de QR, consulta, cancelamento e
 solicitação de reembolso com chave de idempotência e sem retry automático.
@@ -42,10 +50,9 @@ Falhas incertas em operações de escrita são classificadas para reconciliaçã
 O verificador de assinatura do webhook usa HMAC; autenticidade isolada não
 confirma pagamento. Um serviço registra notificações autenticadas e as deduplica
 no banco; o registro concorrente foi testado com PostgreSQL local. O adapter
-HTTP foi testado com respostas simuladas. Ambos ainda precisam ser ligados a
-endpoints e ao processamento financeiro. Antes de utilizá-los,
-é necessário integrar o fluxo aos comandos e conferir os dados canônicos
-do provedor, inclusive valor, moeda, referência e status. Uma função de
+HTTP foi testado com respostas simuladas. O webhook ainda precisa de endpoint
+e processamento; a confirmação financeira deve consultar os dados canônicos do
+provedor e conferir valor, moeda, referência e status. Uma função de
 domínio prepara essa conferência para uma única transação integral; ela ainda
 não está ligada ao registro de pagamento nem à outbox.
 

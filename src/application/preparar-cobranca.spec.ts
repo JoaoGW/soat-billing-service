@@ -2,10 +2,10 @@ import { PrismaClient } from '@prisma/client';
 import { PrepareChargeService } from './preparar-cobranca';
 
 describe('PrepareChargeService', () => {
-  const input = { operationId: 'op', chargeId: 'charge', quoteId: 'quote', quoteVersion: 1, osId: 'os', sagaId: 'saga', filialId: 'branch', externalPosId: 'pos', expiresAt: '2030-01-01T00:15:00Z' };
+  const input = { messageId: 'msg-1', correlationId: 'correlation-1', clientId: 'client', totalInCents: 5000, currency: 'BRL', reservationId: 'reservation', operationId: 'op', chargeId: 'charge', quoteId: 'quote', quoteVersion: 1, osId: 'os', sagaId: 'saga', filialId: 'branch', externalPosId: 'pos', expiresAt: '2030-01-01T00:15:00Z' };
   const now = new Date('2030-01-01T00:00:00Z');
-  const quote = { id: 'quote', version: 1, osId: 'os', sagaId: 'saga', filialId: 'branch', status: 'APPROVED', currency: 'BRL', totalInCents: 5000 };
-  const tx = { $queryRaw: jest.fn(), quote: { findUnique: jest.fn() }, charge: { findFirst: jest.fn(), create: jest.fn() }, chargeAttempt: { findUnique: jest.fn(), create: jest.fn() } };
+  const quote = { id: 'quote', version: 1, osId: 'os', sagaId: 'saga', filialId: 'branch', clientId: 'client', status: 'APPROVED', currency: 'BRL', totalInCents: 5000 };
+  const tx = { inbox: { findUnique: jest.fn(), create: jest.fn() }, $queryRaw: jest.fn(), quote: { findUnique: jest.fn() }, charge: { findFirst: jest.fn(), create: jest.fn() }, chargeAttempt: { findUnique: jest.fn(), create: jest.fn() } };
   const db = { $transaction: jest.fn() };
   const service = new PrepareChargeService(db as unknown as PrismaClient);
   beforeEach(() => {
@@ -26,10 +26,9 @@ describe('PrepareChargeService', () => {
     await expect(service.execute(input, new Date('2040-01-01'))).resolves.toMatchObject({ chargeId: 'charge', providerKey: data.providerKey });
     await expect(service.execute({ ...input, externalPosId: 'other' }, now)).rejects.toThrow('outro conteúdo');
   });
-  it('recusa orçamento não aprovado, outra cobrança e prazo expirado', async () => {
+  it('recusa orçamento não aprovado e outra cobrança', async () => {
     tx.quote.findUnique.mockResolvedValueOnce({ ...quote, status: 'ISSUED' });
     await expect(service.execute(input, now)).rejects.toThrow('Orçamento');
-    await expect(service.execute(input, new Date('2040-01-01'))).rejects.toThrow('expirado');
     tx.charge.findFirst.mockResolvedValue({ id: 'other' });
     await expect(service.execute(input, now)).rejects.toThrow('já existente');
     expect(tx.charge.create).not.toHaveBeenCalled();

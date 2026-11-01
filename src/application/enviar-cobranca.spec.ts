@@ -3,9 +3,9 @@ import { SubmitChargeService } from './enviar-cobranca';
 
 describe('SubmitChargeService', () => {
   const orderId = `ORD${'A'.repeat(26)}`;
-  const charge = { id: 'c1', amountInCents: 5001, externalReference: 'c1', expiresAt: new Date('2030-01-01T00:15:00Z') };
-  const intent = { id: 'a1', chargeId: 'c1', providerKey: 'key1', status: 'INTENT_RECORDED', result: { fingerprint: 'hash', externalPosId: 'pos' }, charge };
-  const tx = { charge: { updateMany: jest.fn(), update: jest.fn() }, chargeAttempt: { updateMany: jest.fn() } };
+  const charge = { id: 'c1', osId: 'os', currency: 'BRL', amountInCents: 5001, externalReference: 'c1', expiresAt: new Date('2030-01-01T00:15:00Z') };
+  const intent = { id: 'a1', chargeId: 'c1', providerKey: 'key1', status: 'INTENT_RECORDED', result: { fingerprint: 'hash', externalPosId: 'pos', messageId: 'msg', correlationId: 'corr', sagaId: 'saga', filialId: 'branch', quoteId: 'quote', quoteVersion: 1, clientId: 'client', reservationId: 'reservation' }, charge };
+  const tx = { outbox: { create: jest.fn() }, charge: { updateMany: jest.fn(), update: jest.fn() }, chargeAttempt: { updateMany: jest.fn() } };
   const db = { chargeAttempt: { findUnique: jest.fn() }, $transaction: jest.fn() };
   const provider = { create: jest.fn() };
   const service = new SubmitChargeService(db as unknown as PrismaClient, provider);
@@ -22,6 +22,7 @@ describe('SubmitChargeService', () => {
     expect(provider.create).toHaveBeenCalledWith({ amountInCents: 5001, externalReference: 'c1', externalPosId: 'pos', idempotencyKey: 'key1', expirationMinutes: 15 });
     expect(tx.charge.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'c1', status: 'INTENT_RECORDED' }, data: { status: 'IN_FLIGHT' } }));
     expect(tx.charge.update).toHaveBeenCalledWith(expect.objectContaining({ data: { status: 'CREATED', providerOrderId: orderId } }));
+    expect(tx.outbox.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: 'billing.charge-created.v1' }) }));
   });
   it('não reenvia operação em voo nem após perda do claim', async () => {
     db.chargeAttempt.findUnique.mockResolvedValueOnce({ ...intent, status: 'IN_FLIGHT' });
@@ -33,6 +34,7 @@ describe('SubmitChargeService', () => {
   it('marca prazo expirado sem contatar provedor', async () => {
     await expect(service.execute('op', new Date('2030-01-01T00:15:00Z'))).resolves.toBe('EXPIRED');
     expect(provider.create).not.toHaveBeenCalled();
+    expect(tx.outbox.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: 'billing.charge-failed.v1' }) }));
   });
   it('marca reconciliação em timeout ou resposta incompatível', async () => {
     provider.create.mockRejectedValueOnce(new Error('timeout')).mockResolvedValueOnce({ id: orderId });
