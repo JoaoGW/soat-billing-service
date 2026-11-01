@@ -31,6 +31,11 @@ Não executar migrations sobre o banco legado.
 `npm run test:integration` exige `DATABASE_URL` para um banco local cujo nome
 termine em `_test`, com migrations aplicadas; não ignora ausência de ambiente.
 
+A intenção de cobrança é gravada com chave idempotente antes do envio. O envio
+reivindica a intenção, não repete operações em voo e sinaliza reconciliação em
+caso de resposta incerta. Os dois serviços ainda não estão ligados a mensagens
+ou endpoints; o evento de cobrança e a reconciliação operacional faltam.
+
 O adapter de Orders API prepara criação de QR, consulta, cancelamento e
 solicitação de reembolso com chave de idempotência e sem retry automático.
 Falhas incertas em operações de escrita são classificadas para reconciliação.
@@ -39,7 +44,7 @@ confirma pagamento. Um serviço registra notificações autenticadas e as dedupl
 no banco; o registro concorrente foi testado com PostgreSQL local. O adapter
 HTTP foi testado com respostas simuladas. Ambos ainda precisam ser ligados a
 endpoints e ao processamento financeiro. Antes de utilizá-los,
-é necessário gravar intenção e chave duravelmente e conferir os dados canônicos
+é necessário integrar o fluxo aos comandos e conferir os dados canônicos
 do provedor, inclusive valor, moeda, referência e status. Uma função de
 domínio prepara essa conferência para uma única transação integral; ela ainda
 não está ligada ao registro de pagamento nem à outbox.
