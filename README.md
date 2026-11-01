@@ -35,8 +35,10 @@ O adapter de Orders API prepara criação de QR, consulta, cancelamento e
 solicitação de reembolso com chave de idempotência e sem retry automático.
 Falhas incertas em operações de escrita são classificadas para reconciliação.
 O verificador de assinatura do webhook usa HMAC; autenticidade isolada não
-confirma pagamento. Ambos foram testados apenas com respostas simuladas e ainda
-não estão ligados a endpoints, persistência ou workers. Antes de utilizá-los,
+confirma pagamento. Um serviço registra notificações autenticadas e as deduplica
+no banco; o registro concorrente foi testado com PostgreSQL local. O adapter
+HTTP foi testado com respostas simuladas. Ambos ainda precisam ser ligados a
+endpoints e ao processamento financeiro. Antes de utilizá-los,
 é necessário gravar intenção e chave duravelmente e conferir os dados canônicos
 do provedor, inclusive valor, moeda, referência e status.
 
