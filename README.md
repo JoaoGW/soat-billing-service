@@ -40,7 +40,9 @@ no banco; o registro concorrente foi testado com PostgreSQL local. O adapter
 HTTP foi testado com respostas simuladas. Ambos ainda precisam ser ligados a
 endpoints e ao processamento financeiro. Antes de utilizá-los,
 é necessário gravar intenção e chave duravelmente e conferir os dados canônicos
-do provedor, inclusive valor, moeda, referência e status.
+do provedor, inclusive valor, moeda, referência e status. Uma função de
+domínio prepara essa conferência para uma única transação integral; ela ainda
+não está ligada ao registro de pagamento nem à outbox.
 
 Referências: [Orders QR](https://www.mercadopago.com.br/developers/pt/reference/in-person-payments/qr-code/orders/create-order/post),
 [cancelamento](https://www.mercadopago.com.br/developers/pt/reference/in-person-payments/qr-code/orders/cancel-order/post),
