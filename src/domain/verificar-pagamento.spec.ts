@@ -1,4 +1,4 @@
-import { verifyCanonicalPayment } from './verificar-pagamento';
+import { verifyCanonicalPayment, verifyProviderPayment } from './verificar-pagamento';
 
 describe('observação canônica de pagamento', () => {
   const expected = { orderId: 'order', externalReference: 'os-1', amountInCents: 5001, currency: 'BRL' as const };
@@ -18,5 +18,15 @@ describe('observação canônica de pagamento', () => {
       expect(verifyCanonicalPayment({ ...order, transactions: { payments } }, expected)).toEqual({ kind: 'RECONCILE' });
     }
     expect(verifyCanonicalPayment(null, expected)).toEqual({ kind: 'RECONCILE' });
+  });
+});
+
+describe('dados canônicos do pagamento', () => {
+  const payment = { id: 12345, status: 'approved', status_detail: 'accredited', currency_id: 'BRL', transaction_amount: 50.01, transaction_amount_refunded: 0, date_approved: '2030-01-01T12:00:00Z' };
+  it('valida detalhes e usa a data real de aprovação', () => {
+    expect(verifyProviderPayment(payment, '12345', 5001)?.paidAt.toISOString()).toBe('2030-01-01T12:00:00.000Z');
+  });
+  it('não aceita id, valor, moeda ou data divergentes', () => {
+    for (const bad of [{ ...payment, id: 123 }, { ...payment, status: 'pending' }, { ...payment, currency_id: 'USD' }, { ...payment, transaction_amount: 50.02 }, { ...payment, date_approved: '2030-01-01' }]) expect(verifyProviderPayment(bad, '12345', 5001)).toBeNull();
   });
 });

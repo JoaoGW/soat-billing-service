@@ -19,6 +19,14 @@ describe('MercadoPagoOrdersClient', () => {
     expect(http.mock.calls[1][1].headers).toMatchObject({ 'X-Idempotency-Key': 'cancel' });
     expect(http.mock.calls[2][1].headers).toMatchObject({ 'X-Idempotency-Key': 'refund' });
   });
+  it('consulta pagamento pelo identificador canônico e rejeita IDs divergentes', async () => {
+    http.mockResolvedValueOnce(new Response(JSON.stringify({ id: 12345, status: 'approved' }), { status: 200 }));
+    await expect(client.getPayment('12345')).resolves.toMatchObject({ status: 'approved' });
+    expect(http.mock.calls[0][0]).toBe('https://api.mercadopago.com/v1/payments/12345');
+    http.mockResolvedValueOnce(new Response(JSON.stringify({ id: 999 }), { status: 200 }));
+    await expect(client.getPayment('12345')).rejects.toMatchObject({ kind: 'UNAVAILABLE' });
+    await expect(client.getPayment('../123')).rejects.toThrow('inválido');
+  });
   it('não chama o provedor com dados inválidos', async () => {
     await expect(client.create({ ...input, amountInCents: 0 })).rejects.toThrow('inválidos');
     await expect(client.create({ ...input, externalReference: '../' })).rejects.toThrow('inválidos');

@@ -34,3 +34,16 @@ export function verifyCanonicalPayment(order: unknown, expected: ExpectedPayment
       !('paid_amount' in payment) || cents(payment.paid_amount) !== expected.amountInCents) return { kind: 'RECONCILE' };
   return { kind: 'CONFIRMED', transactionId: payment.id, providerPaymentId: payment.reference_id };
 }
+
+/** Payment details must be queried independently using the order transaction reference. */
+export function verifyProviderPayment(payment: unknown, providerPaymentId: string, amountInCents: number): { paidAt: Date } | null {
+  if (!payment || typeof payment !== 'object' || Array.isArray(payment) || !/^[0-9]{1,20}$/.test(providerPaymentId) || !Number.isSafeInteger(amountInCents) || amountInCents <= 0) return null;
+  const value = payment as Record<string, unknown>;
+  const id = value.id;
+  if (!((typeof id === 'string' && id === providerPaymentId) || (typeof id === 'number' && Number.isSafeInteger(id) && String(id) === providerPaymentId))) return null;
+  const amount = typeof value.transaction_amount === 'number' && Number.isFinite(value.transaction_amount) ? String(value.transaction_amount) : value.transaction_amount;
+  const refunded = typeof value.transaction_amount_refunded === 'number' ? String(value.transaction_amount_refunded) : value.transaction_amount_refunded;
+  if (cents(refunded) !== 0 || value.status !== 'approved' || value.status_detail !== 'accredited' || value.currency_id !== 'BRL' || cents(amount) !== amountInCents || typeof value.date_approved !== 'string' || !/(Z|[+-]\d\d:\d\d)$/.test(value.date_approved)) return null;
+  const paidAt = new Date(value.date_approved);
+  return Number.isFinite(paidAt.getTime()) ? { paidAt } : null;
+}

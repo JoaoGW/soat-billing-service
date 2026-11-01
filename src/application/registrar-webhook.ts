@@ -2,6 +2,9 @@ import { createHash } from 'node:crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { validMercadoPagoSignature } from '../infrastructure/mercado-pago/webhook-signature';
 
+export class InvalidWebhookSignature extends Error { constructor() { super('Assinatura inválida'); } }
+export class InvalidWebhookPayload extends Error { constructor() { super('Notificação inválida'); } }
+
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 function canonical(value: Json): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
@@ -16,14 +19,14 @@ export class RegisterMercadoPagoWebhook {
   }
 
   async execute(input: { signature: string; requestId: string; dataId: string; body: unknown }): Promise<'RECORDED' | 'DUPLICATE'> {
-    if (!validMercadoPagoSignature({ secret: this.secret, signature: input.signature, requestId: input.requestId, dataId: input.dataId })) throw new Error('Assinatura inválida');
+    if (!validMercadoPagoSignature({ secret: this.secret, signature: input.signature, requestId: input.requestId, dataId: input.dataId })) throw new InvalidWebhookSignature();
     let encoded: string;
-    try { encoded = JSON.stringify(input.body); } catch { throw new Error('Notificação inválida'); }
-    if (!encoded || Buffer.byteLength(encoded, 'utf8') > 262144) throw new Error('Notificação inválida');
+    try { encoded = JSON.stringify(input.body); } catch { throw new InvalidWebhookPayload(); }
+    if (!encoded || Buffer.byteLength(encoded, 'utf8') > 262144) throw new InvalidWebhookPayload();
     const value: unknown = JSON.parse(encoded);
     if (!value || typeof value !== 'object' || Array.isArray(value) || !('type' in value) || value.type !== 'order' ||
         !('action' in value) || typeof value.action !== 'string' || !value.action || !('data' in value) ||
-        !value.data || typeof value.data !== 'object' || !('id' in value.data) || value.data.id !== input.dataId) throw new Error('Notificação inválida');
+        !value.data || typeof value.data !== 'object' || !('id' in value.data) || value.data.id !== input.dataId) throw new InvalidWebhookPayload();
     const eventId = createHash('sha256').update(canonical(value as Json)).digest('hex');
     const result = await this.db.receivedWebhook.createMany({
       data: [{ provider: 'mercado-pago-orders', eventId, payload: value as Prisma.InputJsonValue, status: 'RECEIVED' }],

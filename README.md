@@ -47,14 +47,16 @@ até validar os fluxos e credenciais em ambiente de teste.
 O adapter de Orders API prepara criação de QR, consulta, cancelamento e
 solicitação de reembolso com chave de idempotência e sem retry automático.
 Falhas incertas em operações de escrita são classificadas para reconciliação.
-O verificador de assinatura do webhook usa HMAC; autenticidade isolada não
-confirma pagamento. Um serviço registra notificações autenticadas e as deduplica
-no banco; o registro concorrente foi testado com PostgreSQL local. O adapter
-HTTP foi testado com respostas simuladas. O webhook ainda precisa de endpoint
-e processamento; a confirmação financeira deve consultar os dados canônicos do
-provedor e conferir valor, moeda, referência e status. Uma função de
-domínio prepara essa conferência para uma única transação integral; ela ainda
-não está ligada ao registro de pagamento nem à outbox.
+O webhook usa HMAC e registra notificações antes de confirmar o recebimento.
+Um processador opcional consulta a order e o pagamento canônicos, confere
+referência, valor, moeda, estado, reembolsos e data de aprovação, e grava o
+pagamento e seu evento atomicamente. Pagamento tardio é persistido para
+reconciliação, sem emitir evento que libere trabalho. Os testes usaram
+PostgreSQL local e HTTP simulado; a integração real ainda precisa ser validada.
+O endpoint e processador exigem `ENABLE_MERCADO_PAGO_WEBHOOK=true`,
+`ENABLE_MERCADO_PAGO_WEBHOOK_PROCESSOR=true`, `MERCADO_PAGO_WEBHOOK_SECRET` e
+`MERCADO_PAGO_ACCESS_TOKEN`. Estão desativados por padrão e não devem ser
+habilitados antes da validação completa em ambiente de teste.
 
 Referências: [Orders QR](https://www.mercadopago.com.br/developers/pt/reference/in-person-payments/qr-code/orders/create-order/post),
 [cancelamento](https://www.mercadopago.com.br/developers/pt/reference/in-person-payments/qr-code/orders/cancel-order/post),

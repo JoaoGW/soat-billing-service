@@ -6,6 +6,8 @@ import { QuoteQueryService } from './application/consultar-orcamento';
 import { ClienteGuard } from './interfaces/cliente-guard';
 import { OrcamentoController } from './interfaces/orcamento-controller';
 import { BillingNotificationWorker } from './infrastructure/email/worker';
+import { MercadoPagoWebhookController } from './interfaces/mercado-pago-webhook-controller';
+import { MercadoPagoWebhookWorker } from './infrastructure/mercado-pago/webhook-worker';
 
 @Controller()
 export class HealthController {
@@ -16,7 +18,7 @@ export class HealthController {
 }
 
 @Module({
-  controllers: [HealthController, OrcamentoController],
-  providers: [BillingMessageWorker, BillingNotificationWorker, BillingDatabase, ClienteGuard, { provide: QuoteDecisionService, useFactory: (database: BillingDatabase) => new QuoteDecisionService(database), inject: [BillingDatabase] }, { provide: QuoteQueryService, useFactory: (database: BillingDatabase) => new QuoteQueryService(database), inject: [BillingDatabase] }],
+  controllers: [HealthController, OrcamentoController, MercadoPagoWebhookController],
+  providers: [MercadoPagoWebhookWorker, BillingMessageWorker, BillingNotificationWorker, BillingDatabase, ClienteGuard, { provide: QuoteDecisionService, useFactory: (database: BillingDatabase) => new QuoteDecisionService(database), inject: [BillingDatabase] }, { provide: QuoteQueryService, useFactory: (database: BillingDatabase) => new QuoteQueryService(database), inject: [BillingDatabase] }],
 })
 export class AppModule {}

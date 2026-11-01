@@ -39,6 +39,20 @@ export class MercadoPagoOrdersClient {
     return this.request('GET', this.validateOrderId(orderId));
   }
 
+  async getPayment(paymentId: string): Promise<Record<string, unknown>> {
+    if (typeof paymentId !== 'string' || !/^[0-9]{1,20}$/.test(paymentId)) throw new Error('ID de pagamento inválido');
+    let response: Response;
+    try {
+      response = await this.http(`https://api.mercadopago.com/v1/payments/${paymentId}`, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(this.timeoutMs), headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/json' } });
+    } catch { throw new MercadoPagoError('UNAVAILABLE'); }
+    if (!response.ok) throw new MercadoPagoError(response.status >= 500 || response.status === 429 ? 'UNAVAILABLE' : 'REJECTED', response.status);
+    let data: unknown;
+    try { data = await response.json(); } catch { throw new MercadoPagoError('UNAVAILABLE'); }
+    if (!data || typeof data !== 'object' || Array.isArray(data) || !('id' in data) ||
+        !((typeof data.id === 'string' && data.id === paymentId) || (typeof data.id === 'number' && Number.isSafeInteger(data.id) && String(data.id) === paymentId))) throw new MercadoPagoError('UNAVAILABLE');
+    return data as Record<string, unknown>;
+  }
+
   async cancel(orderId: string, key: string): Promise<Record<string, unknown>> {
     this.validateKey(key);
     return this.request('POST', `${this.validateOrderId(orderId)}/cancel`, key);
