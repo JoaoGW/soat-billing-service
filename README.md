@@ -31,6 +31,20 @@ Não executar migrations sobre o banco legado.
 `npm run test:integration` exige `DATABASE_URL` para um banco local cujo nome
 termine em `_test`, com migrations aplicadas; não ignora ausência de ambiente.
 
+O adapter de Orders API prepara criação de QR, consulta, cancelamento e
+solicitação de reembolso com chave de idempotência e sem retry automático.
+Falhas incertas em operações de escrita são classificadas para reconciliação.
+O verificador de assinatura do webhook usa HMAC; autenticidade isolada não
+confirma pagamento. Ambos foram testados apenas com respostas simuladas e ainda
+não estão ligados a endpoints, persistência ou workers. Antes de utilizá-los,
+é necessário gravar intenção e chave duravelmente e conferir os dados canônicos
+do provedor, inclusive valor, moeda, referência e status.
+
+Referências: [Orders QR](https://www.mercadopago.com.br/developers/pt/reference/in-person-payments/qr-code/orders/create-order/post),
+[cancelamento](https://www.mercadopago.com.br/developers/pt/reference/in-person-payments/qr-code/orders/cancel-order/post),
+[reembolso](https://www.mercadopago.com.br/developers/pt/reference/in-person-payments/qr-code/orders/refund-order/post)
+e [webhooks QR](https://www.mercadopago.com.br/developers/pt/docs/qr-code/notifications).
+
 Pendentes: consultas de cobrança, cobertura das demais falhas definitivas,
 reprocessamento operacional e teste real do SMTP e Service Bus, Orders API e webhook Mercado
 Pago, reconciliação,
