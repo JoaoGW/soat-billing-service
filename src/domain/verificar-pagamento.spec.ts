@@ -1,4 +1,4 @@
-import { verifyCanonicalPayment, verifyProviderPayment } from './verificar-pagamento';
+import { verifyCanonicalPayment, verifyProviderPayment, verifyCanonicalRefund } from './verificar-pagamento';
 
 describe('observação canônica de pagamento', () => {
   const expected = { orderId: 'order', externalReference: 'os-1', amountInCents: 5001, currency: 'BRL' as const };
@@ -28,5 +28,16 @@ describe('dados canônicos do pagamento', () => {
   });
   it('não aceita id, valor, moeda ou data divergentes', () => {
     for (const bad of [{ ...payment, id: 123 }, { ...payment, status: 'pending' }, { ...payment, currency_id: 'USD' }, { ...payment, transaction_amount: 50.02 }, { ...payment, date_approved: '2030-01-01' }]) expect(verifyProviderPayment(bad, '12345', 5001)).toBeNull();
+  });
+});
+
+describe('reembolso canônico', () => {
+  const expected = { orderId: 'order', externalReference: 'ref', providerPaymentId: '123', providerRefundId: 'refund', amountInCents: 5001 };
+  const order = { id: 'order', type: 'qr', external_reference: 'ref', currency: 'BRL', total_amount: '50.01', status: 'refunded', transactions: { payments: [{ id: 'pay', reference_id: '123', status: 'refunded', refunded_amount: '50.01' }], refunds: [{ id: 'refund', transaction_id: 'pay', status: 'processed', amount: '50.01' }] } };
+  it('exige order e transação reembolsadas integralmente', () => { expect(verifyCanonicalRefund(order, expected)).toBe(true); });
+  it('rejeita valores, status ou transações divergentes', () => {
+    expect(verifyCanonicalRefund({ ...order, status: 'processed' }, expected)).toBe(false);
+    expect(verifyCanonicalRefund({ ...order, transactions: { ...order.transactions, refunds: [{ ...order.transactions.refunds[0], amount: '1.00' }] } }, expected)).toBe(false);
+    expect(verifyCanonicalRefund({ ...order, transactions: { ...order.transactions, payments: [{ ...order.transactions.payments[0], reference_id: 'other' }] } }, expected)).toBe(false);
   });
 });

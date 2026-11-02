@@ -63,6 +63,15 @@ Referências: [Orders QR](https://www.mercadopago.com.br/developers/pt/reference
 [reembolso](https://www.mercadopago.com.br/developers/pt/reference/in-person-payments/qr-code/orders/refund-order/post)
 e [webhooks QR](https://www.mercadopago.com.br/developers/pt/docs/qr-code/notifications).
 
+O fluxo de reembolso registra intenção e chave idempotente antes da chamada,
+exige evidência persistida de cancelamento anterior ao início do reparo e
+confirma o resultado por consulta canônica antes de gravar o evento na outbox.
+Resultados incertos permanecem em reconciliação, sem nova chamada automática.
+Os serviços de reembolso ainda não estão conectados ao broker: falta ingestão
+autenticada da evidência de cancelamento e orquestração da Saga. Os testes usam
+PostgreSQL local e provedor simulado; não habilitar reembolso automático antes
+de validar identidade dos produtores e o contrato real do Mercado Pago.
+
 Pendentes: consultas de cobrança, cobertura das demais falhas definitivas,
 reprocessamento operacional e teste real do SMTP e Service Bus, Orders API e webhook Mercado
 Pago, reconciliação,
