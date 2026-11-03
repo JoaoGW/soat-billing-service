@@ -67,11 +67,16 @@ O fluxo de reembolso registra intenção e chave idempotente antes da chamada,
 exige evidência persistida de cancelamento anterior ao início do reparo e
 confirma o resultado por consulta canônica antes de gravar o evento na outbox.
 Resultados incertos permanecem em reconciliação, sem nova chamada automática.
-Os serviços de reembolso ainda não estão conectados ao broker: falta o comando
-de reembolso e a orquestração da Saga. A ingestão autenticada da evidência está
-preparada em subscription separada. Os testes usam
+O comando de reembolso é gravado antes do ACK e aguardará evidência autenticada
+na subscription separada. Os testes usam
 PostgreSQL local e provedor simulado; não habilitar reembolso automático antes
 de validar identidade dos produtores e o contrato real do Mercado Pago.
+
+O comando financeiro é desativado por padrão e exige
+`ENABLE_MERCADO_PAGO_REFUND_COMMANDS=true`, a subscription de evidência,
+`MERCADO_PAGO_ACCESS_TOKEN` e o worker Service Bus. Uma chamada financeira
+incerta permanece em reconciliação; não há repetição automática do pedido.
+O fluxo completo ainda precisa de teste distribuído com broker e provedor.
 
 Pendentes: consultas de cobrança, cobertura das demais falhas definitivas,
 reprocessamento operacional e teste real do SMTP e Service Bus, Orders API e webhook Mercado

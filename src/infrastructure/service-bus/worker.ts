@@ -13,6 +13,8 @@ import { SubmitChargeService } from '../../application/enviar-cobranca';
 import { MercadoPagoOrdersClient } from '../mercado-pago/orders-client';
 import { MessageSigner, MessageVerifier } from './message-signature';
 import { CompensationEvidenceConsumer, evidenceValidator } from './compensation-evidence';
+import { RefundCommandConsumer, RefundCommandProcessor, refundCommandValidator } from './refund-command';
+import { PrepareRefundService, SubmitRefundService, ConfirmRefundService } from '../../application/reembolsar-pagamento';
 
 @Injectable()
 export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown {
@@ -25,6 +27,7 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
   private evidenceSubscription?: { close(): Promise<void> };
   private prisma?: PrismaClient;
   private dispatcher?: OutboxDispatcher;
+  private refundProcessor?: RefundCommandProcessor;
   private timer?: NodeJS.Timeout;
   private active?: Promise<void>;
   private stopping = false;
@@ -47,8 +50,10 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
     const evidenceVerifier = evidenceEnabled && evidenceKey ? new MessageVerifier(evidenceKey, 'soat-execution-service') : undefined;
     const validator = createQuoteCommandValidator(resolve(process.cwd(), 'docs/contracts/messages'));
     const chargeEnabled = process.env.ENABLE_MERCADO_PAGO_COMMANDS === 'true';
+    const refundEnabled = process.env.ENABLE_MERCADO_PAGO_REFUND_COMMANDS === 'true';
     const token = process.env.MERCADO_PAGO_ACCESS_TOKEN;
-    if (chargeEnabled && !token) throw new Error('Configuração incompleta do Mercado Pago');
+    if ((chargeEnabled || refundEnabled) && !token) throw new Error('Configuração incompleta do Mercado Pago');
+    if (refundEnabled && !evidenceEnabled) throw new Error('Evidência de compensação não configurada');
     const chargeValidator = chargeEnabled ? createChargeCommandValidator(resolve(process.cwd(), 'docs/contracts/messages')) : undefined;
     this.prisma = new PrismaClient();
     this.client = new ServiceBusClient(namespace, new WorkloadIdentityCredential());
@@ -66,11 +71,19 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
     const chargeConsumer = chargeEnabled && token && chargeValidator
       ? new ChargeCommandConsumer(new PrepareChargeService(this.prisma), new SubmitChargeService(this.prisma, new MercadoPagoOrdersClient(token)), chargeValidator)
       : undefined;
+    const refundValidator = refundEnabled ? refundCommandValidator(resolve(process.cwd(), 'docs/contracts/messages')) : undefined;
+    const refundConsumer = refundValidator ? new RefundCommandConsumer(this.prisma, refundValidator) : undefined;
+    if (refundEnabled && refundValidator && token) {
+      const provider = new MercadoPagoOrdersClient(token);
+      this.refundProcessor = new RefundCommandProcessor(this.prisma, new PrepareRefundService(this.prisma), new SubmitRefundService(this.prisma, provider), new ConfirmRefundService(this.prisma, provider), refundValidator);
+    }
     this.subscription = receiver.subscribe({
       processMessage: async (message) => {
         if (!verifier.verify(message.body, message.applicationProperties?.signature)) {
           await receiver.deadLetterMessage(message, { deadLetterReason: 'UnauthenticatedProducer', deadLetterErrorDescription: 'Assinatura inválida' }); return;
         }
+        const isRefund = message.subject === 'billing.refund-payment.v1' || (message.body && typeof message.body === 'object' && message.body.type === 'billing.refund-payment.v1');
+        if (isRefund) return refundConsumer ? refundConsumer.process(message, receiver) : receiver.abandonMessage(message);
         const isCharge = message.subject === 'billing.create-charge.v1' ||
           (message.body && typeof message.body === 'object' && message.body.type === 'billing.create-charge.v1');
         if (!isCharge) return consumer.process(message, receiver);
@@ -84,7 +97,7 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
 
   private async poll(): Promise<void> {
     if (this.stopping || !this.dispatcher) return;
-    try { await this.dispatcher.dispatchOne(); }
+    try { await this.dispatcher.dispatchOne(); await this.refundProcessor?.processOne(); }
     catch { this.logger.error('Falha ao processar outbox'); }
     if (!this.stopping) this.timer = setTimeout(() => { this.active = this.poll(); }, 1000);
   }

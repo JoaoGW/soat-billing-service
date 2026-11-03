@@ -1,3 +1,5 @@
+import { RefundCommandConsumer, RefundCommandProcessor, refundCommandValidator } from '../../src/infrastructure/service-bus/refund-command';
+import { ServiceBusReceivedMessage, ServiceBusReceiver } from '@azure/service-bus';
 import { randomUUID, randomInt } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { readFileSync } from 'node:fs';
@@ -62,4 +64,19 @@ describe('reembolso em PostgreSQL com provedor simulado', () => {
     await expect(submit.execute(x.input.operationId)).resolves.toBe('IN_FLIGHT');
     expect(provider.refund).toHaveBeenCalledTimes(1);
   });
+  it('persiste comando antes do ACK e processa reembolso após evidência', async () => {
+    const x = await setup();
+    const body = { messageId: x.input.messageId, operationId: x.input.operationId, correlationId: x.input.correlationId, osId: x.input.osId, sagaId: x.input.sagaId, filialId: x.input.filialId, type: 'billing.refund-payment.v1', schemaVersion: 1, occurredAt: '2030-01-01T00:00:00Z', producer: 'soat-os-service', aggregateType: 'saga', aggregateId: x.input.sagaId, aggregateVersion: 1, causationId: 'cause', data: { refundId: x.input.refundId, paymentId: x.input.paymentId, cancelOperationId: x.input.cancelOperationId, cancelEventId: x.input.cancelEventId, reason: x.input.reason } };
+    const validate = refundCommandValidator(resolve(process.cwd(), 'docs/contracts/messages')); const receiver = { completeMessage: jest.fn(), abandonMessage: jest.fn(), deadLetterMessage: jest.fn() };
+    const message = { body, messageId: body.messageId } as unknown as ServiceBusReceivedMessage;
+    await new RefundCommandConsumer(db, validate).process(message, receiver as unknown as ServiceBusReceiver);
+    expect(receiver.completeMessage).toHaveBeenCalledTimes(1);
+    const refundedOrder = { ...x.order, status: 'refunded', transactions: { payments: [{ ...x.order.transactions.payments[0], status: 'refunded', refunded_amount: '50.01' }], refunds: [{ id: x.providerRefundId, transaction_id: x.order.transactions.payments[0].id, status: 'processed', amount: '50.01' }] } };
+    const provider = { get: jest.fn().mockResolvedValueOnce(x.order).mockResolvedValue(refundedOrder), refund: jest.fn().mockResolvedValue(x.response) };
+    const processor = new RefundCommandProcessor(db, prepare, new SubmitRefundService(db, provider), new ConfirmRefundService(db, provider), validate);
+    for (let i = 0; i < 100; i++) { await processor.processOne(); if ((await db.refund.findUnique({ where: { operationId: x.input.operationId } }))?.status === 'REFUNDED') break; }
+    expect((await db.refund.findUniqueOrThrow({ where: { operationId: x.input.operationId } })).status).toBe('REFUNDED');
+    expect(provider.refund).toHaveBeenCalledTimes(1);
+  });
+
 });
