@@ -12,6 +12,7 @@ import { PrepareChargeService } from '../../application/preparar-cobranca';
 import { SubmitChargeService } from '../../application/enviar-cobranca';
 import { MercadoPagoOrdersClient } from '../mercado-pago/orders-client';
 import { MessageSigner, MessageVerifier } from './message-signature';
+import { CompensationEvidenceConsumer, evidenceValidator } from './compensation-evidence';
 
 @Injectable()
 export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown {
@@ -20,6 +21,8 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
   private sender?: ServiceBusSender;
   private receiver?: ServiceBusReceiver;
   private subscription?: { close(): Promise<void> };
+  private evidenceReceiver?: ServiceBusReceiver;
+  private evidenceSubscription?: { close(): Promise<void> };
   private prisma?: PrismaClient;
   private dispatcher?: OutboxDispatcher;
   private timer?: NodeJS.Timeout;
@@ -38,6 +41,10 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
       throw new Error('Configuração incompleta do worker Service Bus');
     }
     const signer = new MessageSigner(signingKey); const verifier = new MessageVerifier(osKey, 'soat-os-service');
+    const evidenceEnabled = process.env.ENABLE_BILLING_COMPENSATION_EVIDENCE === 'true';
+    const evidenceKey = process.env.EXECUTION_MESSAGE_PUBLIC_KEY; const evidenceSubscription = process.env.SERVICE_BUS_BILLING_EVIDENCE_SUBSCRIPTION;
+    if (evidenceEnabled && (!evidenceKey || !evidenceSubscription)) throw new Error('Configuração incompleta da evidência de compensação');
+    const evidenceVerifier = evidenceEnabled && evidenceKey ? new MessageVerifier(evidenceKey, 'soat-execution-service') : undefined;
     const validator = createQuoteCommandValidator(resolve(process.cwd(), 'docs/contracts/messages'));
     const chargeEnabled = process.env.ENABLE_MERCADO_PAGO_COMMANDS === 'true';
     const token = process.env.MERCADO_PAGO_ACCESS_TOKEN;
@@ -47,6 +54,12 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
     this.client = new ServiceBusClient(namespace, new WorkloadIdentityCredential());
     this.sender = this.client.createSender(topic);
     this.receiver = this.client.createReceiver(queue, { receiveMode: 'peekLock' });
+    if (evidenceEnabled && evidenceSubscription && evidenceVerifier) {
+      const evidenceConsumer = new CompensationEvidenceConsumer(this.prisma, evidenceVerifier, evidenceValidator(resolve(process.cwd(), 'docs/contracts/messages')));
+      this.evidenceReceiver = this.client.createReceiver(topic, evidenceSubscription, { receiveMode: 'peekLock' });
+      const evidenceReceiver = this.evidenceReceiver;
+      this.evidenceSubscription = evidenceReceiver.subscribe({ processMessage: (message) => evidenceConsumer.process(message, evidenceReceiver), processError: async (args) => { this.logger.error(`Falha ao receber evidência: ${args.errorSource}`); } }, { autoCompleteMessages: false, maxConcurrentCalls: 1 });
+    }
     this.dispatcher = new OutboxDispatcher(this.prisma, new ServiceBusEventPublisher(this.sender, signer));
     const receiver = this.receiver;
     const consumer = new ServiceBusCommandConsumer(new GenerateQuoteService(this.prisma), validator);
@@ -84,8 +97,10 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
       catch { this.logger.error('Falha ao encerrar recurso do worker'); }
     };
     await close(() => this.subscription?.close());
+    await close(() => this.evidenceSubscription?.close());
     await close(() => this.active);
     await close(() => this.receiver?.close());
+    await close(() => this.evidenceReceiver?.close());
     await close(() => this.sender?.close());
     await close(() => this.client?.close());
     await close(() => this.prisma?.$disconnect());

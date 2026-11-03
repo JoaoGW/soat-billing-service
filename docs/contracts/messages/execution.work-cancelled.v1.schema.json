@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://soat.example/contracts/messages/execution.work-cancelled.v1.schema.json",
+  "allOf": [
+    {
+      "$ref": "https://soat.example/contracts/messages/envelope.v1.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "execution.work-cancelled.v1"
+        },
+        "producer": {
+          "const": "soat-execution-service"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "outcome",
+            "reason"
+          ],
+          "properties": {
+            "executionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "outcome": {
+              "enum": [
+                "CANCELLED",
+                "ALREADY_STARTED"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-zA-Z0-9_-]+$"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

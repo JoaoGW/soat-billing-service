@@ -67,8 +67,9 @@ O fluxo de reembolso registra intenção e chave idempotente antes da chamada,
 exige evidência persistida de cancelamento anterior ao início do reparo e
 confirma o resultado por consulta canônica antes de gravar o evento na outbox.
 Resultados incertos permanecem em reconciliação, sem nova chamada automática.
-Os serviços de reembolso ainda não estão conectados ao broker: falta ingestão
-autenticada da evidência de cancelamento e orquestração da Saga. Os testes usam
+Os serviços de reembolso ainda não estão conectados ao broker: falta o comando
+de reembolso e a orquestração da Saga. A ingestão autenticada da evidência está
+preparada em subscription separada. Os testes usam
 PostgreSQL local e provedor simulado; não habilitar reembolso automático antes
 de validar identidade dos produtores e o contrato real do Mercado Pago.
 
@@ -83,3 +84,10 @@ Billing em `BILLING_MESSAGE_PRIVATE_KEY`; eventos são assinados e comandos sem
 assinatura válida seguem à DLQ antes do processamento. Não compartilhe chaves
 privadas entre serviços. A distribuição e a rotação das chaves ainda precisam
 ser configuradas e testadas no ambiente real.
+
+A subscription de evidência é opcional e desativada por padrão. Requer
+`ENABLE_BILLING_COMPENSATION_EVIDENCE=true`,
+`SERVICE_BUS_BILLING_EVIDENCE_SUBSCRIPTION`,
+`EXECUTION_MESSAGE_PUBLIC_KEY` e worker Service Bus habilitado. A subscription
+deve filtrar `execution.work-cancelled.v1`; registrar a evidência não dispara
+reembolso. A subscription e as permissões precisam ser validadas no broker.
