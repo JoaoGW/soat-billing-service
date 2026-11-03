@@ -11,6 +11,7 @@ import { ChargeCommandConsumer, createChargeCommandValidator } from './charge-co
 import { PrepareChargeService } from '../../application/preparar-cobranca';
 import { SubmitChargeService } from '../../application/enviar-cobranca';
 import { MercadoPagoOrdersClient } from '../mercado-pago/orders-client';
+import { MessageSigner, MessageVerifier } from './message-signature';
 
 @Injectable()
 export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown {
@@ -30,11 +31,13 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
     const namespace = process.env.SERVICE_BUS_NAMESPACE;
     const queue = process.env.SERVICE_BUS_COMMAND_QUEUE;
     const topic = process.env.SERVICE_BUS_EVENT_TOPIC;
-    if (!namespace || !/^[a-z0-9-]+\.servicebus\.windows\.net$/i.test(namespace) ||
+    const signingKey = process.env.BILLING_MESSAGE_PRIVATE_KEY; const osKey = process.env.OS_MESSAGE_PUBLIC_KEY;
+    if (!signingKey || !osKey || !namespace || !/^[a-z0-9-]+\.servicebus\.windows\.net$/i.test(namespace) ||
         !queue || !topic || !process.env.DATABASE_URL || !process.env.AZURE_TENANT_ID ||
         !process.env.AZURE_CLIENT_ID || !process.env.AZURE_FEDERATED_TOKEN_FILE) {
       throw new Error('Configuração incompleta do worker Service Bus');
     }
+    const signer = new MessageSigner(signingKey); const verifier = new MessageVerifier(osKey, 'soat-os-service');
     const validator = createQuoteCommandValidator(resolve(process.cwd(), 'docs/contracts/messages'));
     const chargeEnabled = process.env.ENABLE_MERCADO_PAGO_COMMANDS === 'true';
     const token = process.env.MERCADO_PAGO_ACCESS_TOKEN;
@@ -44,14 +47,17 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
     this.client = new ServiceBusClient(namespace, new WorkloadIdentityCredential());
     this.sender = this.client.createSender(topic);
     this.receiver = this.client.createReceiver(queue, { receiveMode: 'peekLock' });
-    this.dispatcher = new OutboxDispatcher(this.prisma, new ServiceBusEventPublisher(this.sender));
+    this.dispatcher = new OutboxDispatcher(this.prisma, new ServiceBusEventPublisher(this.sender, signer));
     const receiver = this.receiver;
     const consumer = new ServiceBusCommandConsumer(new GenerateQuoteService(this.prisma), validator);
     const chargeConsumer = chargeEnabled && token && chargeValidator
       ? new ChargeCommandConsumer(new PrepareChargeService(this.prisma), new SubmitChargeService(this.prisma, new MercadoPagoOrdersClient(token)), chargeValidator)
       : undefined;
     this.subscription = receiver.subscribe({
-      processMessage: (message) => {
+      processMessage: async (message) => {
+        if (!verifier.verify(message.body, message.applicationProperties?.signature)) {
+          await receiver.deadLetterMessage(message, { deadLetterReason: 'UnauthenticatedProducer', deadLetterErrorDescription: 'Assinatura inválida' }); return;
+        }
         const isCharge = message.subject === 'billing.create-charge.v1' ||
           (message.body && typeof message.body === 'object' && message.body.type === 'billing.create-charge.v1');
         if (!isCharge) return consumer.process(message, receiver);

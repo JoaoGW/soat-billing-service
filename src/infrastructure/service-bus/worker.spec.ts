@@ -1,3 +1,5 @@
+import { generateKeyPairSync } from 'node:crypto';
+import { MessageSigner } from './message-signature';
 import { WorkloadIdentityCredential } from '@azure/identity';
 import { ServiceBusClient } from '@azure/service-bus';
 import { PrismaClient } from '@prisma/client';
@@ -10,6 +12,11 @@ jest.mock('@prisma/client');
 jest.mock('../../application/publicar-outbox');
 
 describe('BillingMessageWorker', () => {
+  const keys = generateKeyPairSync('ed25519');
+  const privateKey = keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  const publicKey = keys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+  const signer = new MessageSigner(privateKey);
+  const signed = (body: object) => ({ subject: 'billing.create-charge.v1', body, applicationProperties: { signature: signer.sign(body) } });
   const originalEnv = process.env;
   const closeSubscription = jest.fn().mockResolvedValue(undefined);
   const receiver = { subscribe: jest.fn(), close: jest.fn().mockResolvedValue(undefined), abandonMessage: jest.fn().mockResolvedValue(undefined), deadLetterMessage: jest.fn().mockResolvedValue(undefined) };
@@ -20,7 +27,7 @@ describe('BillingMessageWorker', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env = { ...originalEnv, ENABLE_SERVICE_BUS_WORKER: 'false', ENABLE_MERCADO_PAGO_COMMANDS: 'false' };
+    process.env = { ...originalEnv, ENABLE_SERVICE_BUS_WORKER: 'false', ENABLE_MERCADO_PAGO_COMMANDS: 'false', BILLING_MESSAGE_PRIVATE_KEY: privateKey, OS_MESSAGE_PUBLIC_KEY: publicKey };
     delete process.env.MERCADO_PAGO_ACCESS_TOKEN;
     receiver.subscribe.mockReturnValue({ close: closeSubscription });
     client.createSender.mockReturnValue(sender);
@@ -68,9 +75,12 @@ describe('BillingMessageWorker', () => {
     Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
     const worker = new BillingMessageWorker(); worker.onModuleInit();
     const handlers = receiver.subscribe.mock.calls[0][0] as { processMessage(message: unknown): Promise<void> };
-    const message = { subject: 'billing.create-charge.v1', body: {} };
+    const message = signed({ producer: 'soat-os-service' });
     await handlers.processMessage(message);
     expect(receiver.abandonMessage).toHaveBeenCalledWith(message);
+    const forged = { ...message, body: { producer: 'soat-os-service', tampered: true } };
+    await handlers.processMessage(forged);
+    expect(receiver.deadLetterMessage).toHaveBeenCalledWith(forged, expect.objectContaining({ deadLetterReason: 'UnauthenticatedProducer' }));
     await worker.onApplicationShutdown();
   });
   it('exige token somente quando cobrança é explicitamente habilitada', () => {
@@ -81,7 +91,7 @@ describe('BillingMessageWorker', () => {
     Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_MERCADO_PAGO_COMMANDS: 'true', MERCADO_PAGO_ACCESS_TOKEN: 'test-token', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
     const worker = new BillingMessageWorker(); worker.onModuleInit();
     const handlers = receiver.subscribe.mock.calls[0][0] as { processMessage(message: unknown): Promise<void> };
-    await handlers.processMessage({ subject: 'billing.create-charge.v1', body: {} });
+    await handlers.processMessage(signed({ producer: 'soat-os-service' }));
     expect(receiver.deadLetterMessage).toHaveBeenCalledTimes(1);
     await worker.onApplicationShutdown();
   });

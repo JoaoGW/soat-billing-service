@@ -1,8 +1,9 @@
 import { ServiceBusMessage, ServiceBusSender } from '@azure/service-bus';
 import { MessagePublisher } from '../../application/publicar-outbox';
+import { MessageSigner } from './message-signature';
 
 export class ServiceBusEventPublisher implements MessagePublisher {
-  constructor(private readonly sender: Pick<ServiceBusSender, 'sendMessages'>) {}
+  constructor(private readonly sender: Pick<ServiceBusSender, 'sendMessages'>, private readonly signer: MessageSigner) {}
 
   async publish(message: { messageId: string; type: string; payload: unknown }): Promise<void> {
     const payload = message.payload;
@@ -14,7 +15,7 @@ export class ServiceBusEventPublisher implements MessagePublisher {
     const event: ServiceBusMessage = {
       messageId: message.messageId, subject: message.type, contentType: 'application/json', correlationId,
       body: payload,
-      applicationProperties: { ...(traceparent ? { traceparent } : {}), ...(tracestate ? { tracestate } : {}) },
+      applicationProperties: { signature: this.signer.sign(payload), ...(traceparent ? { traceparent } : {}), ...(tracestate ? { tracestate } : {}) },
     };
     await this.sender.sendMessages(event);
   }

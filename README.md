@@ -76,3 +76,10 @@ Pendentes: consultas de cobrança, cobertura das demais falhas definitivas,
 reprocessamento operacional e teste real do SMTP e Service Bus, Orders API e webhook Mercado
 Pago, reconciliação,
 Sonar, deploy automatizado, instrumentação e testes distribuídos.
+
+O transporte exige assinatura Ed25519 para autenticar o OS. Quando o worker é
+habilitado, configure `OS_MESSAGE_PUBLIC_KEY` e a chave privada exclusiva de
+Billing em `BILLING_MESSAGE_PRIVATE_KEY`; eventos são assinados e comandos sem
+assinatura válida seguem à DLQ antes do processamento. Não compartilhe chaves
+privadas entre serviços. A distribuição e a rotação das chaves ainda precisam
+ser configuradas e testadas no ambiente real.
