@@ -63,7 +63,14 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
       const evidenceConsumer = new CompensationEvidenceConsumer(this.prisma, evidenceVerifier, evidenceValidator(resolve(process.cwd(), 'docs/contracts/messages')));
       this.evidenceReceiver = this.client.createReceiver(topic, evidenceSubscription, { receiveMode: 'peekLock' });
       const evidenceReceiver = this.evidenceReceiver;
-      this.evidenceSubscription = evidenceReceiver.subscribe({ processMessage: (message) => evidenceConsumer.process(message, evidenceReceiver), processError: async (args) => { this.logger.error(`Falha ao receber evidência: ${args.errorSource}`); } }, { autoCompleteMessages: false, maxConcurrentCalls: 1 });
+      this.evidenceSubscription = evidenceReceiver.subscribe({ processMessage: async (message) => {
+        const body: unknown = message.body;
+        const type = body && typeof body === 'object' && 'type' in body ? body.type : undefined;
+        if (message.subject !== 'execution.work-cancelled.v1' && type !== 'execution.work-cancelled.v1') {
+          await evidenceReceiver.completeMessage(message); return;
+        }
+        await evidenceConsumer.process(message, evidenceReceiver);
+      }, processError: async (args) => { this.logger.error(`Falha ao receber evidência: ${args.errorSource}`); } }, { autoCompleteMessages: false, maxConcurrentCalls: 1 });
     }
     this.dispatcher = new OutboxDispatcher(this.prisma, new ServiceBusEventPublisher(this.sender, signer));
     const receiver = this.receiver;

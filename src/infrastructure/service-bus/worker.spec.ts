@@ -19,7 +19,7 @@ describe('BillingMessageWorker', () => {
   const signed = (body: object) => ({ subject: 'billing.create-charge.v1', body, applicationProperties: { signature: signer.sign(body) } });
   const originalEnv = process.env;
   const closeSubscription = jest.fn().mockResolvedValue(undefined);
-  const receiver = { subscribe: jest.fn(), close: jest.fn().mockResolvedValue(undefined), abandonMessage: jest.fn().mockResolvedValue(undefined), deadLetterMessage: jest.fn().mockResolvedValue(undefined) };
+  const receiver = { subscribe: jest.fn(), close: jest.fn().mockResolvedValue(undefined), completeMessage: jest.fn().mockResolvedValue(undefined), abandonMessage: jest.fn().mockResolvedValue(undefined), deadLetterMessage: jest.fn().mockResolvedValue(undefined) };
   const sender = { close: jest.fn().mockResolvedValue(undefined) };
   const client = { createSender: jest.fn(), createReceiver: jest.fn(), close: jest.fn().mockResolvedValue(undefined) };
   const prisma = { $disconnect: jest.fn().mockResolvedValue(undefined) };
@@ -86,6 +86,18 @@ describe('BillingMessageWorker', () => {
   it('exige token somente quando cobrança é explicitamente habilitada', () => {
     Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_MERCADO_PAGO_COMMANDS: 'true', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
     expect(() => new BillingMessageWorker().onModuleInit()).toThrow('Mercado Pago');
+  });
+  it('descarta eventos alheios à evidência sem preencher a DLQ e rejeita cancelamentos não autenticados', async () => {
+    Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_BILLING_COMPENSATION_EVIDENCE: 'true', EXECUTION_MESSAGE_PUBLIC_KEY: publicKey, SERVICE_BUS_BILLING_EVIDENCE_SUBSCRIPTION: 'billing-evidence', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
+    const worker = new BillingMessageWorker(); worker.onModuleInit();
+    const handlers = receiver.subscribe.mock.calls[0][0] as { processMessage(message: unknown): Promise<void> };
+    const unrelated = { subject: 'billing.quote-issued.v1', body: { type: 'billing.quote-issued.v1' } };
+    await handlers.processMessage(unrelated);
+    expect(receiver.completeMessage).toHaveBeenCalledWith(unrelated);
+    const forged = { subject: 'execution.work-cancelled.v1', body: { type: 'execution.work-cancelled.v1' } };
+    await handlers.processMessage(forged);
+    expect(receiver.deadLetterMessage).toHaveBeenCalledWith(forged, expect.objectContaining({ deadLetterReason: 'InvalidEvidence' }));
+    await worker.onApplicationShutdown();
   });
   it('direciona comando de cobrança inválido ao consumidor habilitado', async () => {
     Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_MERCADO_PAGO_COMMANDS: 'true', MERCADO_PAGO_ACCESS_TOKEN: 'test-token', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
