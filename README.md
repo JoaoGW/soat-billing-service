@@ -67,6 +67,13 @@ O fluxo de reembolso registra intenção e chave idempotente antes da chamada,
 exige evidência persistida de cancelamento anterior ao início do reparo e
 confirma o resultado por consulta canônica antes de gravar o evento na outbox.
 Resultados incertos permanecem em reconciliação, sem nova chamada automática.
+Com `ENABLE_MERCADO_PAGO_REFUND_RECONCILIATION=true`, junto das configurações do
+worker e do reembolso, o Billing consulta a ordem canônica a cada 60 segundos
+para recuperar um reembolso comprovadamente integral, único e correspondente à
+transação original. Um envio ainda em voo aguarda pelo menos dois minutos. A
+recuperação nunca repete o pedido ao provedor; dados divergentes ou inconclusivos
+permanecem em reconciliação. A integração real continua exigindo validação com
+credenciais e contas de teste do Mercado Pago.
 O comando de reembolso é gravado antes do ACK e aguardará evidência autenticada
 na subscription separada. Os testes usam
 PostgreSQL local e provedor simulado; não habilitar reembolso automático antes

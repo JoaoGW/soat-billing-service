@@ -15,6 +15,7 @@ import { MessageSigner, MessageVerifier } from './message-signature';
 import { CompensationEvidenceConsumer, evidenceValidator } from './compensation-evidence';
 import { RefundCommandConsumer, RefundCommandProcessor, refundCommandValidator } from './refund-command';
 import { PrepareRefundService, SubmitRefundService, ConfirmRefundService } from '../../application/reembolsar-pagamento';
+import { ReconcileRefundService } from '../../application/reconciliar-reembolso';
 
 @Injectable()
 export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown {
@@ -28,6 +29,8 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
   private prisma?: PrismaClient;
   private dispatcher?: OutboxDispatcher;
   private refundProcessor?: RefundCommandProcessor;
+  private refundReconciler?: ReconcileRefundService;
+  private nextRefundReconciliation = 0;
   private timer?: NodeJS.Timeout;
   private active?: Promise<void>;
   private stopping = false;
@@ -51,9 +54,11 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
     const validator = createQuoteCommandValidator(resolve(process.cwd(), 'docs/contracts/messages'));
     const chargeEnabled = process.env.ENABLE_MERCADO_PAGO_COMMANDS === 'true';
     const refundEnabled = process.env.ENABLE_MERCADO_PAGO_REFUND_COMMANDS === 'true';
+    const reconcileEnabled = process.env.ENABLE_MERCADO_PAGO_REFUND_RECONCILIATION === 'true';
     const token = process.env.MERCADO_PAGO_ACCESS_TOKEN;
     if ((chargeEnabled || refundEnabled) && !token) throw new Error('Configuração incompleta do Mercado Pago');
     if (refundEnabled && !evidenceEnabled) throw new Error('Evidência de compensação não configurada');
+    if (reconcileEnabled && !refundEnabled) throw new Error('Reembolso não configurado para reconciliação');
     const chargeValidator = chargeEnabled ? createChargeCommandValidator(resolve(process.cwd(), 'docs/contracts/messages')) : undefined;
     this.prisma = new PrismaClient();
     this.client = new ServiceBusClient(namespace, new WorkloadIdentityCredential());
@@ -83,6 +88,7 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
     if (refundEnabled && refundValidator && token) {
       const provider = new MercadoPagoOrdersClient(token);
       this.refundProcessor = new RefundCommandProcessor(this.prisma, new PrepareRefundService(this.prisma), new SubmitRefundService(this.prisma, provider), new ConfirmRefundService(this.prisma, provider), refundValidator);
+      if (reconcileEnabled) this.refundReconciler = new ReconcileRefundService(this.prisma, provider);
     }
     this.subscription = receiver.subscribe({
       processMessage: async (message) => {
@@ -104,7 +110,16 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
 
   private async poll(): Promise<void> {
     if (this.stopping || !this.dispatcher) return;
-    try { await this.dispatcher.dispatchOne(); await this.refundProcessor?.processOne(); }
+    try {
+      await this.dispatcher.dispatchOne(); await this.refundProcessor?.processOne();
+      if (this.refundReconciler && this.prisma && Date.now() >= this.nextRefundReconciliation) {
+        this.nextRefundReconciliation = Date.now() + 60000;
+        const older = new Date(Date.now() - 60000);
+        const rows = await this.prisma.$queryRaw<Array<{ operationId: string }>>`SELECT r."operationId" FROM "Refund" r WHERE r."updatedAt" <= ${older} AND (r."status" IN ('IN_FLIGHT','RECONCILIACAO_NECESSARIA','PENDING_CONFIRMATION') OR (r."status"='REFUNDED' AND EXISTS (SELECT 1 FROM "Inbox" i WHERE i."consumer"='billing.refund-staging' AND i."operationId"=r."operationId" AND i."status" IN ('PENDING','RECONCILIACAO_NECESSARIA')))) ORDER BY random() LIMIT 1`;
+        if (rows[0] && await this.refundReconciler.execute(rows[0].operationId) === 'REFUNDED')
+          await this.prisma.inbox.updateMany({ where: { consumer: 'billing.refund-staging', operationId: rows[0].operationId, status: { in: ['PENDING', 'RECONCILIACAO_NECESSARIA'] } }, data: { status: 'REFUNDED', appliedAt: new Date() } });
+      }
+    }
     catch { this.logger.error('Falha ao processar outbox'); }
     if (!this.stopping) this.timer = setTimeout(() => { this.active = this.poll(); }, 1000);
   }

@@ -5,6 +5,8 @@ import { ServiceBusClient } from '@azure/service-bus';
 import { PrismaClient } from '@prisma/client';
 import { OutboxDispatcher } from '../../application/publicar-outbox';
 import { BillingMessageWorker } from './worker';
+import { RefundCommandProcessor } from './refund-command';
+import { ReconcileRefundService } from '../../application/reconciliar-reembolso';
 
 jest.mock('@azure/identity');
 jest.mock('@azure/service-bus');
@@ -22,12 +24,12 @@ describe('BillingMessageWorker', () => {
   const receiver = { subscribe: jest.fn(), close: jest.fn().mockResolvedValue(undefined), completeMessage: jest.fn().mockResolvedValue(undefined), abandonMessage: jest.fn().mockResolvedValue(undefined), deadLetterMessage: jest.fn().mockResolvedValue(undefined) };
   const sender = { close: jest.fn().mockResolvedValue(undefined) };
   const client = { createSender: jest.fn(), createReceiver: jest.fn(), close: jest.fn().mockResolvedValue(undefined) };
-  const prisma = { $disconnect: jest.fn().mockResolvedValue(undefined) };
+  const prisma = { $disconnect: jest.fn().mockResolvedValue(undefined), $queryRaw: jest.fn(), inbox: { updateMany: jest.fn() } };
   const dispatcher = { dispatchOne: jest.fn().mockResolvedValue('EMPTY') };
 
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env = { ...originalEnv, ENABLE_SERVICE_BUS_WORKER: 'false', ENABLE_MERCADO_PAGO_COMMANDS: 'false', BILLING_MESSAGE_PRIVATE_KEY: privateKey, OS_MESSAGE_PUBLIC_KEY: publicKey };
+    process.env = { ...originalEnv, ENABLE_SERVICE_BUS_WORKER: 'false', ENABLE_MERCADO_PAGO_COMMANDS: 'false', ENABLE_MERCADO_PAGO_REFUND_RECONCILIATION: 'false', ENABLE_MERCADO_PAGO_REFUND_COMMANDS: 'false', ENABLE_BILLING_COMPENSATION_EVIDENCE: 'false', BILLING_MESSAGE_PRIVATE_KEY: privateKey, OS_MESSAGE_PUBLIC_KEY: publicKey };
     delete process.env.MERCADO_PAGO_ACCESS_TOKEN;
     receiver.subscribe.mockReturnValue({ close: closeSubscription });
     client.createSender.mockReturnValue(sender);
@@ -98,6 +100,16 @@ describe('BillingMessageWorker', () => {
     await handlers.processMessage(forged);
     expect(receiver.deadLetterMessage).toHaveBeenCalledWith(forged, expect.objectContaining({ deadLetterReason: 'InvalidEvidence' }));
     await worker.onApplicationShutdown();
+  });
+  it('reconcilia reembolsos pendentes somente quando habilitado e atualiza staging confirmado', async () => {
+    Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_BILLING_COMPENSATION_EVIDENCE: 'true', ENABLE_MERCADO_PAGO_REFUND_COMMANDS: 'true', ENABLE_MERCADO_PAGO_REFUND_RECONCILIATION: 'true', MERCADO_PAGO_ACCESS_TOKEN: 'test-token', EXECUTION_MESSAGE_PUBLIC_KEY: publicKey, SERVICE_BUS_BILLING_EVIDENCE_SUBSCRIPTION: 'billing-evidence', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
+    const processOne = jest.spyOn(RefundCommandProcessor.prototype, 'processOne').mockResolvedValue('EMPTY');
+    const reconcile = jest.spyOn(ReconcileRefundService.prototype, 'execute').mockResolvedValue('REFUNDED');
+    prisma.$queryRaw.mockResolvedValue([{ operationId: 'op' }]); prisma.inbox.updateMany.mockResolvedValue({ count: 1 });
+    const worker = new BillingMessageWorker(); worker.onModuleInit(); await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(reconcile).toHaveBeenCalledWith('op');
+    expect(prisma.inbox.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ operationId: 'op', consumer: 'billing.refund-staging' }), data: expect.objectContaining({ status: 'REFUNDED' }) }));
+    await worker.onApplicationShutdown(); processOne.mockRestore(); reconcile.mockRestore();
   });
   it('direciona comando de cobrança inválido ao consumidor habilitado', async () => {
     Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_MERCADO_PAGO_COMMANDS: 'true', MERCADO_PAGO_ACCESS_TOKEN: 'test-token', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
