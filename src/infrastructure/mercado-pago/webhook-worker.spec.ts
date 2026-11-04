@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { ProcessMercadoPagoWebhook } from '../../application/processar-webhook';
 import { MercadoPagoWebhookWorker } from './webhook-worker';
+import { ReconcileChargeFromWebhook } from '../../application/reconciliar-cobranca';
 
 jest.mock('@prisma/client');
 jest.mock('../../application/processar-webhook');
@@ -10,7 +11,7 @@ describe('MercadoPagoWebhookWorker', () => {
   const db = { receivedWebhook: { findMany: jest.fn() }, $disconnect: jest.fn().mockResolvedValue(undefined) };
   const processor = { execute: jest.fn() };
   beforeEach(() => {
-    jest.clearAllMocks(); jest.useFakeTimers(); process.env = { ...original }; delete process.env.ENABLE_MERCADO_PAGO_WEBHOOK_PROCESSOR;
+    jest.clearAllMocks(); jest.useFakeTimers(); process.env = { ...original }; delete process.env.ENABLE_MERCADO_PAGO_WEBHOOK_PROCESSOR; delete process.env.ENABLE_MERCADO_PAGO_CHARGE_RECONCILIATION;
     jest.mocked(PrismaClient).mockImplementation(() => db as unknown as PrismaClient);
     jest.mocked(ProcessMercadoPagoWebhook).mockImplementation(() => processor as unknown as ProcessMercadoPagoWebhook);
     db.receivedWebhook.findMany.mockResolvedValue([]); processor.execute.mockResolvedValue('APPLIED');
@@ -35,5 +36,14 @@ describe('MercadoPagoWebhookWorker', () => {
     expect(db.receivedWebhook.findMany.mock.calls[1][0].where.OR).toBeDefined();
     await worker.onApplicationShutdown();
     expect(db.$disconnect).toHaveBeenCalled(); expect(jest.getTimerCount()).toBe(0);
+  });
+  it('reavalia webhook após recuperar a cobrança canônica', async () => {
+    Object.assign(process.env, { ENABLE_MERCADO_PAGO_WEBHOOK_PROCESSOR: 'true', ENABLE_MERCADO_PAGO_CHARGE_RECONCILIATION: 'true', MERCADO_PAGO_ACCESS_TOKEN: 'test', DATABASE_URL: 'postgresql://localhost/db' });
+    db.receivedWebhook.findMany.mockResolvedValueOnce([{ eventId: 'event', receivedAt: new Date() }]);
+    processor.execute.mockResolvedValueOnce('PENDING').mockResolvedValueOnce('APPLIED');
+    const reconcile = jest.spyOn(ReconcileChargeFromWebhook.prototype, 'execute').mockResolvedValue('RECOVERED');
+    const worker = new MercadoPagoWebhookWorker(); worker.onModuleInit(); await jest.advanceTimersByTimeAsync(0);
+    expect(reconcile).toHaveBeenCalledWith('event'); expect(processor.execute).toHaveBeenCalledTimes(2);
+    await worker.onApplicationShutdown(); reconcile.mockRestore();
   });
 });

@@ -6,6 +6,7 @@ import addFormats from 'ajv-formats';
 import { PrismaClient } from '@prisma/client';
 import { PrepareChargeService } from '../../src/application/preparar-cobranca';
 import { SubmitChargeService } from '../../src/application/enviar-cobranca';
+import { ReconcileChargeFromWebhook } from '../../src/application/reconciliar-cobranca';
 
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error('DATABASE_URL de teste é obrigatória');
@@ -61,6 +62,22 @@ describe('envio de cobrança com intenção durável', () => {
       await prisma.$executeRawUnsafe('DROP TRIGGER test_block_charge_outbox ON "Outbox"');
       await prisma.$executeRawUnsafe('DROP FUNCTION test_block_charge_outbox()');
     }
+  });
+  it('recupera order criada após timeout usando webhook e consulta canônica, sem nova cobrança', async () => {
+    const next = { ...input, messageId: `timeout-msg-${tag}`, operationId: `timeout-op-${tag}`, chargeId: `timeout-charge-${tag}`, quoteId: `timeout-q-${tag}`, osId: `timeout-os-${tag}`, sagaId: `timeout-s-${tag}` };
+    await prisma.quote.create({ data: { id: next.quoteId, osId: next.osId, sagaId: next.sagaId, filialId: next.filialId, clientId: next.clientId, version: 1, totalInCents: 5123, status: 'APPROVED', expiresAt: new Date('2030-01-02') } });
+    await prepare.execute(next, now);
+    const create = jest.fn().mockRejectedValue(new Error('timeout após criação'));
+    expect(await new SubmitChargeService(prisma, { create }).execute(next.operationId, now)).toBe('RECONCILIACAO_NECESSARIA');
+    const providerOrder = `ORD${randomUUID().replaceAll('-', '').slice(0, 26)}`; const eventId = `event-${tag}`;
+    await prisma.receivedWebhook.create({ data: { provider: 'mercado-pago-orders', eventId, status: 'RECEIVED', payload: { type: 'order', data: { id: providerOrder } } } });
+    const provider = { get: jest.fn().mockResolvedValue({ id: providerOrder, type: 'qr', external_reference: next.chargeId, currency: 'BRL', total_amount: '51.23', status: 'processed' }) };
+    const service = new ReconcileChargeFromWebhook(prisma, provider);
+    const results = await Promise.all([service.execute(eventId, now), service.execute(eventId, now)]);
+    expect(results.sort()).toEqual(['PENDING', 'RECOVERED']);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(await prisma.charge.findUniqueOrThrow({ where: { id: next.chargeId } })).toMatchObject({ status: 'CREATED', providerOrderId: providerOrder });
+    expect(await prisma.outbox.count({ where: { type: 'billing.charge-created.v1', payload: { path: ['data', 'chargeId'], equals: next.chargeId } } })).toBe(1);
   });
 
 });

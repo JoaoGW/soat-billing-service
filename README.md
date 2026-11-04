@@ -83,6 +83,14 @@ O comando financeiro é desativado por padrão e exige
 `ENABLE_MERCADO_PAGO_REFUND_COMMANDS=true`, a subscription de evidência,
 `MERCADO_PAGO_ACCESS_TOKEN` e o worker Service Bus. Uma chamada financeira
 incerta permanece em reconciliação; não há repetição automática do pedido.
+`ENABLE_MERCADO_PAGO_CHARGE_RECONCILIATION=true` habilita recuperação de
+cobranças incertas a partir de notificações autenticadas pendentes. O worker
+consulta a order pelo ID da notificação e confere referência, valor, moeda,
+orçamento e intenção persistida antes de gravar `charge-created`; ele nunca
+cria uma segunda order. Um envio em voo aguarda dois minutos. A recuperação
+exige uma notificação com o ID da order; sem ela, ou se a consulta for
+divergente, a cobrança permanece em reconciliação para análise operacional.
+Valide o comportamento com contas de teste do Mercado Pago antes de habilitar.
 O fluxo completo ainda precisa de teste distribuído com broker e provedor.
 
 Pendentes: consultas de cobrança, cobertura das demais falhas definitivas,
