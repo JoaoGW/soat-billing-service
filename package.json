@@ -12,6 +12,7 @@
     "test:contracts": "node scripts/contracts/check.cjs",
     "test:integration": "jest --config jest.integration.cjs --runInBand --watchman=false",
     "test:cov": "jest --runInBand --coverage",
+    "test:coverage-infrastructure": "jest --config jest.infrastructure.config.cjs --runInBand",
     "start:prod": "node dist/main.js",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
     "db:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma"
