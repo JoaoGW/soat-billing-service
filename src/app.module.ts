@@ -8,6 +8,8 @@ import { OrcamentoController } from './interfaces/orcamento-controller';
 import { BillingNotificationWorker } from './infrastructure/email/worker';
 import { MercadoPagoWebhookController } from './interfaces/mercado-pago-webhook-controller';
 import { MercadoPagoWebhookWorker } from './infrastructure/mercado-pago/webhook-worker';
+import { ChargeQueryService } from './application/consultar-cobranca';
+import { CobrancaController } from './interfaces/cobranca-controller';
 
 @Controller()
 export class HealthController {
@@ -18,7 +20,7 @@ export class HealthController {
 }
 
 @Module({
-  controllers: [HealthController, OrcamentoController, MercadoPagoWebhookController],
-  providers: [MercadoPagoWebhookWorker, BillingMessageWorker, BillingNotificationWorker, BillingDatabase, ClienteGuard, { provide: QuoteDecisionService, useFactory: (database: BillingDatabase) => new QuoteDecisionService(database), inject: [BillingDatabase] }, { provide: QuoteQueryService, useFactory: (database: BillingDatabase) => new QuoteQueryService(database), inject: [BillingDatabase] }],
+  controllers: [HealthController, OrcamentoController, CobrancaController, MercadoPagoWebhookController],
+  providers: [MercadoPagoWebhookWorker, BillingMessageWorker, BillingNotificationWorker, BillingDatabase, ClienteGuard, { provide: QuoteDecisionService, useFactory: (database: BillingDatabase) => new QuoteDecisionService(database), inject: [BillingDatabase] }, { provide: QuoteQueryService, useFactory: (database: BillingDatabase) => new QuoteQueryService(database), inject: [BillingDatabase] }, { provide: ChargeQueryService, useFactory: (database: BillingDatabase) => new ChargeQueryService(database), inject: [BillingDatabase] }],
 })
 export class AppModule {}

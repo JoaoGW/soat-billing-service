@@ -1,7 +1,13 @@
 # Billing Service — Fase 4
 
-Esqueleto em desenvolvimento. Este repositório ainda não implementa o serviço
-financeiro nem está pronto para receber tráfego ou efetuar deploy.
+`GET /cobrancas/:id` e `GET /cobrancas/por-os/:osId` exigem JWT de cliente;
+ambas filtram pelo proprietário do orçamento no banco. O QR é retornado apenas
+enquanto a cobrança está criada e não expirou. A resposta não expõe chaves de
+idempotência nem identificadores internos do provedor. A referência REST está
+em [docs/openapi.yaml](docs/openapi.yaml).
+
+Serviço financeiro em evolução. Os fluxos implementados ainda precisam de
+validação com a infraestrutura e a conta de testes reais antes do cutover.
 
 O schema próprio contém orçamento, decisão, cobrança, tentativas, pagamento,
 reembolso, inbox e outbox. A migration inicial foi verificada em PostgreSQL
@@ -15,7 +21,7 @@ recusa exigem JWT de cliente. Os POSTs também exigem `Idempotency-Key` e corpo
 O despachante da outbox reserva mensagens entre workers, retenta com o mesmo ID
 e registra falhas após cinco tentativas. O adapter Service Bus e o worker usam
 identidade de workload e permanecem desativados por padrão. O caminho local foi
-testado com broker simulado. Falhas definitivas de prazo e orçamento existente
+testado com o emulador Service Bus. Falhas definitivas de prazo e orçamento existente
 geram evento transacional antes do ACK; outros cenários de falha ainda precisam
 ser definidos. Faltam o spike com Service Bus real e reprocessamento operacional
 das falhas antes de habilitar o worker.
@@ -93,7 +99,7 @@ divergente, a cobrança permanece em reconciliação para análise operacional.
 Valide o comportamento com contas de teste do Mercado Pago antes de habilitar.
 O fluxo completo ainda precisa de teste distribuído com broker e provedor.
 
-Pendentes: consultas de cobrança, cobertura das demais falhas definitivas,
+Pendentes: cobertura das demais falhas definitivas,
 reprocessamento operacional e teste real do SMTP e Service Bus, Orders API e webhook Mercado
 Pago, reconciliação,
 Sonar, deploy automatizado, instrumentação e testes distribuídos.

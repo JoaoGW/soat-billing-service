@@ -1,0 +1,125 @@
+openapi: 3.0.3
+info:
+  title: SOAT Billing
+  version: 1.0.0
+  description: Contratos disponíveis na Fase 4. IDs do cliente são obtidos do JWT, nunca do corpo da requisição.
+paths:
+  /health:
+    get:
+      summary: Estado do processo
+      responses:
+        '200': { description: Processo disponível }
+  /orcamentos/{id}:
+    get:
+      summary: Consultar orçamento próprio
+      security: [{ cliente: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { description: Orçamento e snapshot de itens }
+        '401': { description: JWT inválido }
+        '403': { description: Orçamento pertence a outro cliente }
+        '404': { description: Orçamento inexistente }
+        '503': { description: Consulta indisponível }
+  /orcamentos/{id}/aprovar:
+    post:
+      summary: Aprovar versão do orçamento próprio
+      security: [{ cliente: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { $ref: '#/components/requestBodies/Decision' }
+      responses:
+        '200': { description: Decisão registrada ou repetição idempotente }
+        '400': { description: Requisição inválida }
+        '401': { description: JWT inválido }
+        '403': { description: Orçamento pertence a outro cliente }
+        '404': { description: Orçamento inexistente }
+        '409': { description: Versão, estado ou chave conflitante }
+        '503': { description: Operação indisponível }
+  /orcamentos/{id}/recusar:
+    post:
+      summary: Recusar versão do orçamento próprio
+      security: [{ cliente: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { $ref: '#/components/requestBodies/Decision' }
+      responses:
+        '200': { description: Decisão registrada ou repetição idempotente }
+        '400': { description: Requisição inválida }
+        '401': { description: JWT inválido }
+        '403': { description: Orçamento pertence a outro cliente }
+        '404': { description: Orçamento inexistente }
+        '409': { description: Versão, estado ou chave conflitante }
+        '503': { description: Operação indisponível }
+  /cobrancas/{id}:
+    get:
+      summary: Consultar cobrança própria
+      security: [{ cliente: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { $ref: '#/components/responses/Charge' }
+        '400': { description: Identificador inválido }
+        '401': { description: JWT inválido }
+        '404': { description: Cobrança inexistente ou não pertencente ao cliente }
+        '503': { description: Consulta indisponível }
+  /cobrancas/por-os/{osId}:
+    get:
+      summary: Consultar cobrança mais recente de uma OS própria
+      security: [{ cliente: [] }]
+      parameters:
+        - { name: osId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { $ref: '#/components/responses/Charge' }
+        '400': { description: Identificador inválido }
+        '401': { description: JWT inválido }
+        '404': { description: Cobrança inexistente ou não pertencente ao cliente }
+        '503': { description: Consulta indisponível }
+  /webhooks/mercado-pago:
+    post:
+      summary: Receber notificação assinada de order
+      parameters:
+        - { name: x-signature, in: header, required: true, schema: { type: string } }
+        - { name: x-request-id, in: header, required: true, schema: { type: string } }
+        - { name: data.id, in: query, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, action, data]
+              properties:
+                type: { type: string, enum: [order] }
+                action: { type: string }
+                data: { type: object, required: [id], properties: { id: { type: string } } }
+      responses:
+        '200': { description: Notificação registrada ou duplicada }
+        '400': { description: Payload inválido }
+        '401': { description: Assinatura inválida }
+        '503': { description: Processador desativado ou indisponível }
+components:
+  securitySchemes:
+    cliente: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 128 } }
+  requestBodies:
+    Decision:
+      required: true
+      content:
+        application/json:
+          schema: { type: object, additionalProperties: false, required: [versao], properties: { versao: { type: integer, minimum: 1 } } }
+  responses:
+    Charge:
+      description: Cobrança própria; qrData só aparece para cobrança criada e não expirada.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [id, osId, quoteId, status, amountInCents, currency, expiresAt]
+            properties:
+              id: { type: string }
+              osId: { type: string }
+              quoteId: { type: string }
+              status: { type: string }
+              amountInCents: { type: integer }
+              currency: { type: string, example: BRL }
+              expiresAt: { type: string, format: date-time }
+              qrData: { type: string }
