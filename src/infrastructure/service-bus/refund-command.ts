@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
@@ -54,7 +55,20 @@ export class RefundCommandProcessor {
       return 'PENDING';
     } catch (error) {
       if (error instanceof RefundEvidenceMismatchError) {
-        await this.db.inbox.updateMany({ where: { consumer: 'billing.refund-staging', messageId: event.messageId, status: 'PENDING' }, data: { status: 'RECONCILIACAO_NECESSARIA', appliedAt: new Date() } });
+        await this.db.$transaction(async (tx) => {
+          const now = new Date();
+          const updated = await tx.inbox.updateMany({ where: { consumer: 'billing.refund-staging', messageId: event.messageId, status: 'PENDING' }, data: { status: 'RECONCILIACAO_NECESSARIA', appliedAt: now } });
+          if (!updated.count) return;
+          const messageId = randomUUID(); const type = 'billing.refund-blocked.v1';
+          await tx.outbox.create({ data: { messageId, type, payload: {
+            messageId, type, schemaVersion: 1, occurredAt: now.toISOString(), producer: 'soat-billing-service',
+            aggregateType: 'refund', aggregateId: input.refundId, aggregateVersion: 1,
+            osId: input.osId, sagaId: input.sagaId, filialId: input.filialId,
+            correlationId: input.correlationId, causationId: input.messageId, operationId: input.operationId,
+            ...(input.traceparent ? { traceparent: input.traceparent } : {}), ...(input.tracestate ? { tracestate: input.tracestate } : {}),
+            data: { refundId: input.refundId, paymentId: input.paymentId, cancelOperationId: input.cancelOperationId, cancelEventId: input.cancelEventId, reasonCode: 'EVIDENCE_MISMATCH' },
+          } } });
+        });
         return 'RECONCILIACAO_NECESSARIA';
       }
       return 'PENDING';

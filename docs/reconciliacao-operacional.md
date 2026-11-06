@@ -34,6 +34,11 @@ WHERE i."consumer" = 'billing.refund-staging'
 
 Se `refundStatus` estiver vazio, não há intenção de reembolso para o comando.
 A consulta não resolve o incidente nem autoriza repetir uma solicitação.
+O evento `billing.refund-blocked.v1` é gravado na outbox na mesma transação que
+o incidente. O OS validará o evento assinado e a correspondência com o comando
+antes de sinalizar a Saga; implante uma versão do OS que conheça esse contrato
+antes de habilitar a publicação da nova versão de Billing. Confira a assinatura
+e a entrega na subscription e na DLQ no ambiente real.
 
 Os reconciliadores existentes não cobrem automaticamente toda a matriz de
 incidentes; casos sem comprovação continuam pendentes para análise. Valide

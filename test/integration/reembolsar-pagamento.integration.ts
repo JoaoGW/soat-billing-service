@@ -94,11 +94,24 @@ describe('reembolso em PostgreSQL com provedor simulado', () => {
     expect(receiver.completeMessage).toHaveBeenCalledTimes(1);
     const provider = { get: jest.fn(), refund: jest.fn() };
     const processor = new RefundCommandProcessor(db, prepare, new SubmitRefundService(db, provider), new ConfirmRefundService(db, provider), validate);
+    await db.$executeRawUnsafe("CREATE FUNCTION test_block_refund_incident() RETURNS trigger AS $$ BEGIN IF NEW.type = 'billing.refund-blocked.v1' THEN RAISE EXCEPTION 'outbox indisponível'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+    await db.$executeRawUnsafe('CREATE TRIGGER test_block_refund_incident BEFORE INSERT ON "Outbox" FOR EACH ROW EXECUTE FUNCTION test_block_refund_incident()');
+    try {
+      await expect(processor.processOne()).rejects.toThrow();
+      expect((await db.inbox.findUniqueOrThrow({ where: { consumer_messageId: { consumer: 'billing.refund-staging', messageId: body.messageId } } })).status).toBe('PENDING');
+    } finally {
+      await db.$executeRawUnsafe('DROP TRIGGER test_block_refund_incident ON "Outbox"');
+      await db.$executeRawUnsafe('DROP FUNCTION test_block_refund_incident()');
+    }
     expect(await processor.processOne()).toBe('RECONCILIACAO_NECESSARIA');
     expect((await db.inbox.findUniqueOrThrow({ where: { consumer_messageId: { consumer: 'billing.refund-staging', messageId: body.messageId } } })).status).toBe('RECONCILIACAO_NECESSARIA');
     expect(await db.refund.count({ where: { paymentId: x.input.paymentId } })).toBe(0);
     expect(provider.get).not.toHaveBeenCalled();
     expect(provider.refund).not.toHaveBeenCalled();
+    const events = await db.outbox.findMany({ where: { type: 'billing.refund-blocked.v1', payload: { path: ['sagaId'], equals: x.input.sagaId } } });
+    expect(events).toHaveLength(1);
+    const dir = resolve(process.cwd(), 'docs/contracts/messages'); const ajv = new Ajv(); addFormats(ajv); ajv.addSchema(JSON.parse(readFileSync(resolve(dir, 'envelope.schema.json'), 'utf8')));
+    expect(ajv.validate(JSON.parse(readFileSync(resolve(dir, 'billing.refund-blocked.v1.schema.json'), 'utf8')), events[0].payload)).toBe(true);
   });
 
 });

@@ -3,7 +3,7 @@ import { ServiceBusReceivedMessage, ServiceBusReceiver } from '@azure/service-bu
 import { RefundCommandConsumer, RefundCommandProcessor } from './refund-command';
 import { PrepareRefundService, SubmitRefundService, ConfirmRefundService, RefundEvidenceMismatchError } from '../../application/reembolsar-pagamento';
 describe('comando de reembolso', () => {
-  const tx = { $executeRaw: jest.fn(), $queryRaw: jest.fn() };
+  const tx = { $executeRaw: jest.fn(), $queryRaw: jest.fn(), inbox: { updateMany: jest.fn() }, outbox: { create: jest.fn() } };
   const db = { $transaction: jest.fn(async (fn: (x: typeof tx) => Promise<void>) => fn(tx)), $queryRaw: jest.fn(), inbox: { findUnique: jest.fn(), updateMany: jest.fn() } };
   const validate = jest.fn(); const receiver = { completeMessage: jest.fn(), abandonMessage: jest.fn(), deadLetterMessage: jest.fn() };
   const body = { messageId: 'm', operationId: 'op', correlationId: 'c', osId: 'os', sagaId: 's', filialId: 'f', type: 'billing.refund-payment.v1', data: { refundId: 'r', paymentId: 'p', cancelOperationId: 'cancel', cancelEventId: 'e', reason: 'failure' } };
@@ -11,7 +11,7 @@ describe('comando de reembolso', () => {
   const prepare = { execute: jest.fn() }; const submit = { execute: jest.fn() }; const confirm = { execute: jest.fn() };
   const consumer = new RefundCommandConsumer(db as unknown as PrismaClient, validate);
   const processor = new RefundCommandProcessor(db as unknown as PrismaClient, prepare as unknown as PrepareRefundService, submit as unknown as SubmitRefundService, confirm as unknown as ConfirmRefundService, validate);
-  beforeEach(() => { jest.resetAllMocks(); validate.mockReturnValue(true); tx.$queryRaw.mockResolvedValue([{ matches: true }]); db.$queryRaw.mockResolvedValue([{ messageId: 'm', payload: body }]); db.inbox.findUnique.mockResolvedValue({}); prepare.execute.mockResolvedValue({}); submit.execute.mockResolvedValue('PENDING_CONFIRMATION'); confirm.execute.mockResolvedValue('REFUNDED'); });
+  beforeEach(() => { jest.resetAllMocks(); db.$transaction.mockImplementation(async (fn: (x: typeof tx) => Promise<void>) => fn(tx)); validate.mockReturnValue(true); tx.$queryRaw.mockResolvedValue([{ matches: true }]); tx.inbox.updateMany.mockResolvedValue({ count: 1 }); db.$queryRaw.mockResolvedValue([{ messageId: 'm', payload: body }]); db.inbox.findUnique.mockResolvedValue({}); prepare.execute.mockResolvedValue({}); submit.execute.mockResolvedValue('PENDING_CONFIRMATION'); confirm.execute.mockResolvedValue('REFUNDED'); });
   it('grava o comando antes do ACK e rejeita conteúdo inválido', async () => {
     await consumer.process(msg, receiver as unknown as ServiceBusReceiver); expect(receiver.completeMessage).toHaveBeenCalledTimes(1);
     validate.mockReturnValue(false); await consumer.process(msg, receiver as unknown as ServiceBusReceiver); expect(receiver.deadLetterMessage).toHaveBeenCalledTimes(1);
@@ -40,8 +40,15 @@ describe('comando de reembolso', () => {
   it('registra evidência autenticada divergente para reconciliação sem chamar o provedor', async () => {
     prepare.execute.mockRejectedValue(new RefundEvidenceMismatchError());
     expect(await processor.processOne()).toBe('RECONCILIACAO_NECESSARIA');
-    expect(db.inbox.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ status: 'PENDING' }), data: expect.objectContaining({ status: 'RECONCILIACAO_NECESSARIA' }) }));
+    expect(tx.inbox.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ status: 'PENDING' }), data: expect.objectContaining({ status: 'RECONCILIACAO_NECESSARIA' }) }));
+    expect(tx.outbox.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: 'billing.refund-blocked.v1' }) }));
     expect(submit.execute).not.toHaveBeenCalled();
     expect(confirm.execute).not.toHaveBeenCalled();
+  });
+  it('não publica conflito duplicado quando outro worker já o registrou', async () => {
+    prepare.execute.mockRejectedValue(new RefundEvidenceMismatchError());
+    tx.inbox.updateMany.mockResolvedValue({ count: 0 });
+    expect(await processor.processOne()).toBe('RECONCILIACAO_NECESSARIA');
+    expect(tx.outbox.create).not.toHaveBeenCalled();
   });
 });
