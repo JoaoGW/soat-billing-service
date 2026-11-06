@@ -53,6 +53,10 @@ processamento de um comando não impede a tentativa das outras. Casos sem
 comprovação continuam pendentes. O cursor fica em memória e reinicia com o
 processo; não há garantia de prazo, especialmente em reinícios frequentes ou
 filas em crescimento. Acompanhe a idade e o volume dos incidentes.
+Os comandos de reembolso com evidência autenticada também são percorridos por
+identificador, retomando após falha e retornando ao início ao esgotar a fila.
+O cursor também é local ao processo; ele não substitui monitoramento ou garante
+prazo em caso de reinícios repetidos.
 
 Os reconciliadores existentes não cobrem automaticamente toda a matriz de
 incidentes; casos sem comprovação continuam pendentes para análise. Valide

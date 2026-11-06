@@ -38,6 +38,18 @@ describe('comando de reembolso', () => {
     expect(confirm.execute).not.toHaveBeenCalled();
     expect(db.inbox.updateMany).not.toHaveBeenCalled();
   });
+  it('avança após comando pendente e volta ao início ao esgotar a fila', async () => {
+    const isolated = new RefundCommandProcessor(db as unknown as PrismaClient, prepare as unknown as PrepareRefundService, submit as unknown as SubmitRefundService, confirm as unknown as ConfirmRefundService, validate);
+    const first = { messageId: 'a', payload: { ...body, messageId: 'a', operationId: 'op-a' } };
+    const second = { messageId: 'b', payload: { ...body, messageId: 'b', operationId: 'op-b' } };
+    db.$queryRaw.mockResolvedValueOnce([first]).mockResolvedValueOnce([second]).mockResolvedValueOnce([]).mockResolvedValueOnce([first]);
+    prepare.execute.mockRejectedValueOnce(new Error('indisponível'));
+    expect(await isolated.processOne()).toBe('PENDING');
+    expect(await isolated.processOne()).toBe('REFUNDED');
+    expect(await isolated.processOne()).toBe('REFUNDED');
+    expect(db.$queryRaw.mock.calls.map(call => call[1])).toEqual(['', 'a', 'b', '']);
+    expect(submit.execute.mock.calls.map(call => call[0])).toEqual(['op-b', 'op-a']);
+  });
   it('registra evidência autenticada divergente para reconciliação sem chamar o provedor', async () => {
     prepare.execute.mockRejectedValue(new RefundEvidenceMismatchError());
     expect(await processor.processOne()).toBe('RECONCILIACAO_NECESSARIA');

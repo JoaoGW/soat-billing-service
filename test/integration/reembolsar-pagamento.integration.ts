@@ -43,6 +43,23 @@ describe('reembolso em PostgreSQL com provedor simulado', () => {
       expect(second[0].operationId).toBe(operations[20]);
     } finally { await db.refund.deleteMany({ where: { operationId: { in: operations } } }); }
   });
+  it('avança no PostgreSQL quando o primeiro comando elegível ainda falha', async () => {
+    const first = await setup(); const second = await setup();
+    const prefix = `cursor-${randomUUID()}-`;
+    const events = [first, second].map((x, index) => ({ messageId: `${prefix}${index}`, operationId: x.input.operationId, correlationId: x.input.correlationId, osId: x.input.osId, sagaId: x.input.sagaId, filialId: x.input.filialId, data: { refundId: x.input.refundId, paymentId: x.input.paymentId, cancelOperationId: x.input.cancelOperationId, cancelEventId: x.input.cancelEventId, reason: x.input.reason } }));
+    await db.inbox.createMany({ data: events.map(event => ({ consumer: 'billing.refund-staging', messageId: event.messageId, operationId: event.operationId, type: 'billing.refund-payment.v1', payload: event, status: 'PENDING' })) });
+    const fakePrepare = { execute: jest.fn().mockRejectedValueOnce(new Error('indisponível')).mockResolvedValue({}) };
+    const fakeSubmit = { execute: jest.fn().mockResolvedValue('REFUNDED') };
+    const processor = new RefundCommandProcessor(db, fakePrepare as unknown as PrepareRefundService, fakeSubmit as unknown as SubmitRefundService, {} as ConfirmRefundService, () => true);
+    (processor as unknown as { cursor: string }).cursor = prefix;
+    try {
+      expect(await processor.processOne()).toBe('PENDING');
+      expect(await processor.processOne()).toBe('REFUNDED');
+      expect(fakeSubmit.execute).toHaveBeenCalledTimes(1);
+      expect(fakeSubmit.execute).toHaveBeenCalledWith(second.input.operationId);
+      expect((await db.inbox.findUniqueOrThrow({ where: { consumer_messageId: { consumer: 'billing.refund-staging', messageId: events[0].messageId } } })).status).toBe('PENDING');
+    } finally { await db.inbox.deleteMany({ where: { consumer: 'billing.refund-staging', messageId: { in: events.map(event => event.messageId) } } }); }
+  });
   it('serializa intenção, usa chave única e não repete pedido em voo', async () => {
     const x = await setup(); const results = await Promise.all(Array.from({ length: 4 }, () => prepare.execute(x.input)));
     expect(new Set(results.map((item) => item.providerKey)).size).toBe(1);

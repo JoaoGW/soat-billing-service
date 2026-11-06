@@ -36,10 +36,14 @@ export class RefundCommandConsumer {
 }
 /** Re-evaluates persisted commands when authenticated evidence arrives. */
 export class RefundCommandProcessor {
+  private cursor = '';
   constructor(private readonly db: PrismaClient, private readonly prepare: PrepareRefundService, private readonly submit: SubmitRefundService, private readonly confirm: ConfirmRefundService, private readonly validate: (value: unknown) => boolean) {}
   async processOne(): Promise<'EMPTY' | 'PENDING' | 'REFUNDED' | 'RECONCILIACAO_NECESSARIA'> {
-    const rows = await this.db.$queryRaw<Array<{ messageId: string; payload: unknown }>>`SELECT s."messageId", s."payload" FROM "Inbox" s WHERE s."consumer" = 'billing.refund-staging' AND s."status" = 'PENDING' AND EXISTS (SELECT 1 FROM "Inbox" e WHERE e."consumer" = 'billing.compensation-evidence' AND e."messageId" = s."payload"->'data'->>'cancelEventId' AND e."status" = 'APPLIED') ORDER BY random() LIMIT 1`;
+    const findNext = (cursor: string) => this.db.$queryRaw<Array<{ messageId: string; payload: unknown }>>`SELECT s."messageId", s."payload" FROM "Inbox" s WHERE s."consumer" = 'billing.refund-staging' AND s."status" = 'PENDING' AND s."messageId" > ${cursor} AND EXISTS (SELECT 1 FROM "Inbox" e WHERE e."consumer" = 'billing.compensation-evidence' AND e."messageId" = s."payload"->'data'->>'cancelEventId' AND e."status" = 'APPLIED') ORDER BY s."messageId" LIMIT 1`;
+    let rows = await findNext(this.cursor);
+    if (!rows.length && this.cursor) { this.cursor = ''; rows = await findNext(this.cursor); }
     const row = rows[0]; if (!row) return 'EMPTY';
+    this.cursor = row.messageId;
     if (!this.validate(row.payload)) throw new Error('Comando persistido inválido');
     const event = row.payload as Envelope; const input: PrepareRefund = { messageId: event.messageId, operationId: event.operationId, correlationId: event.correlationId, osId: event.osId, sagaId: event.sagaId, filialId: event.filialId, ...(event.traceparent ? { traceparent: event.traceparent } : {}), ...(event.tracestate ? { tracestate: event.tracestate } : {}), ...event.data };
     const evidence = await this.db.inbox.findUnique({ where: { consumer_messageId: { consumer: 'billing.compensation-evidence', messageId: input.cancelEventId } } });
