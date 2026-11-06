@@ -25,11 +25,13 @@ describe('observabilidade do Billing', () => {
     expect(resourceFromAttributes).toHaveBeenCalledWith(expect.objectContaining({ 'service.name': 'soat-billing-service', 'service.version': 'sha-test' }));
     expect(OTLPTraceExporter).toHaveBeenCalledWith({ url: 'https://collector.test/v1/traces', headers: { 'api-key': 'test-key' } });
     expect(sdk?.start).toHaveBeenCalled();
-    const options = jest.mocked(getNodeAutoInstrumentations).mock.calls[0][0] as unknown as Record<string, { requestHook: (span: { setAttribute: jest.Mock }) => void }>;
-    const span = { setAttribute: jest.fn() };
+    const options = jest.mocked(getNodeAutoInstrumentations).mock.calls[0][0] as unknown as Record<string, { requestHook: (span: { setAttribute: jest.Mock; updateName: jest.Mock }) => void }>;
+    const span = { setAttribute: jest.fn(), updateName: jest.fn() };
     options['@opentelemetry/instrumentation-http'].requestHook(span);
     options['@opentelemetry/instrumentation-pg'].requestHook(span);
     expect(span.setAttribute).toHaveBeenCalledWith('url.query', '[redacted]');
     expect(span.setAttribute).toHaveBeenCalledWith('db.query.text', '[redacted]');
+    expect(span.updateName).toHaveBeenCalledWith('HTTP request');
+    expect(span.updateName).toHaveBeenCalledWith('PostgreSQL query');
   });
 });

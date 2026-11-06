@@ -18,8 +18,8 @@ export function startObservability(env: NodeJS.ProcessEnv = process.env): NodeSD
     traceExporter: new OTLPTraceExporter({ url: `${endpoint}/v1/traces`, headers }),
     metricReader: new PeriodicExportingMetricReader({ exporter: new OTLPMetricExporter({ url: `${endpoint}/v1/metrics`, headers }), exportIntervalMillis: 30000 }),
     instrumentations: [getNodeAutoInstrumentations({
-      '@opentelemetry/instrumentation-pg': { enhancedDatabaseReporting: false, requestHook: span => { span.setAttribute('db.query.text', '[redacted]'); span.setAttribute('db.statement', '[redacted]'); } },
-      '@opentelemetry/instrumentation-http': { requestHook: span => { span.setAttribute('url.full', '[redacted]'); span.setAttribute('url.path', '[redacted]'); span.setAttribute('url.query', '[redacted]'); span.setAttribute('http.url', '[redacted]'); span.setAttribute('http.target', '[redacted]'); } },
+      '@opentelemetry/instrumentation-pg': { enhancedDatabaseReporting: false, requestHook: span => { span.updateName('PostgreSQL query'); span.setAttribute('db.query.text', '[redacted]'); span.setAttribute('db.statement', '[redacted]'); } },
+      '@opentelemetry/instrumentation-http': { requestHook: span => { span.updateName('HTTP request'); span.setAttribute('url.full', '[redacted]'); span.setAttribute('url.path', '[redacted]'); span.setAttribute('url.query', '[redacted]'); span.setAttribute('http.url', '[redacted]'); span.setAttribute('http.target', '[redacted]'); } },
     })],
   });
   sdk.start();
