@@ -17,5 +17,10 @@ export default [{
     'sonarjs/weak-ssl': 'error',
     'sonarjs/no-weak-cipher': 'error',
     'sonarjs/insecure-jwt-token': 'error',
+    'sonarjs/no-hardcoded-secrets': 'error',
+    'sonarjs/no-hardcoded-passwords': 'error',
+    'sonarjs/no-invalid-regexp': 'error',
+    'sonarjs/no-control-regex': 'error',
+    'sonarjs/no-regex-spaces': 'error',
   },
 }];
