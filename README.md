@@ -1,5 +1,23 @@
 # Billing Service — Fase 4
 
+Billing é responsável por orçamento, aprovação, cobrança, pagamento e
+reembolso. Seu PostgreSQL é exclusivo do serviço; nenhum outro serviço deve
+ler suas tabelas. A comunicação assíncrona usa comandos e eventos assinados,
+inbox e outbox. O OS coordena uma **Saga orquestrada**: após aprovação e
+reserva confirmada, solicita a cobrança; em compensação, Billing exige prova
+autenticada de que o reparo não começou antes de reembolsar. Transações locais
+são atômicas, enquanto resultados financeiros incertos ficam em reconciliação.
+
+```mermaid
+flowchart LR
+  OS[OS: orquestrador] -->|comandos| Broker[Service Bus]
+  Broker --> Billing[Billing]
+  Billing --> SQL[(PostgreSQL Billing)]
+  Billing --> MP[Mercado Pago]
+  Billing -->|eventos| Broker
+  Broker --> OS
+```
+
 `GET /cobrancas/:id` e `GET /cobrancas/por-os/:osId` exigem JWT de cliente;
 ambas filtram pelo proprietário do orçamento no banco. O QR é retornado apenas
 enquanto a cobrança está criada e não expirou. A resposta não expõe chaves de
