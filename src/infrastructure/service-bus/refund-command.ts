@@ -48,16 +48,27 @@ export class RefundCommandProcessor {
       await this.prepare.execute(input);
       const submitted = await this.submit.execute(input.operationId);
       const outcome = submitted === 'PENDING_CONFIRMATION' ? await this.confirm.execute(input.operationId) : submitted;
-      if (outcome === 'REFUNDED' || outcome === 'RECONCILIACAO_NECESSARIA') {
+      if (outcome === 'RECONCILIACAO_NECESSARIA') {
+        await this.recordIncident(input, 'PROVIDER_RESULT_UNKNOWN');
+        return outcome;
+      }
+      if (outcome === 'REFUNDED') {
         await this.db.inbox.updateMany({ where: { consumer: 'billing.refund-staging', messageId: event.messageId, status: 'PENDING' }, data: { status: outcome, appliedAt: new Date() } });
         return outcome;
       }
       return 'PENDING';
     } catch (error) {
       if (error instanceof RefundEvidenceMismatchError) {
+        await this.recordIncident(input, 'EVIDENCE_MISMATCH');
+        return 'RECONCILIACAO_NECESSARIA';
+      }
+      return 'PENDING';
+    }
+  }
+  private async recordIncident(input: PrepareRefund, reasonCode: 'EVIDENCE_MISMATCH' | 'PROVIDER_RESULT_UNKNOWN'): Promise<void> {
         await this.db.$transaction(async (tx) => {
           const now = new Date();
-          const updated = await tx.inbox.updateMany({ where: { consumer: 'billing.refund-staging', messageId: event.messageId, status: 'PENDING' }, data: { status: 'RECONCILIACAO_NECESSARIA', appliedAt: now } });
+          const updated = await tx.inbox.updateMany({ where: { consumer: 'billing.refund-staging', messageId: input.messageId, status: 'PENDING' }, data: { status: 'RECONCILIACAO_NECESSARIA', appliedAt: now } });
           if (!updated.count) return;
           const messageId = randomUUID(); const type = 'billing.refund-blocked.v1';
           await tx.outbox.create({ data: { messageId, type, payload: {
@@ -66,12 +77,8 @@ export class RefundCommandProcessor {
             osId: input.osId, sagaId: input.sagaId, filialId: input.filialId,
             correlationId: input.correlationId, causationId: input.messageId, operationId: input.operationId,
             ...(input.traceparent ? { traceparent: input.traceparent } : {}), ...(input.tracestate ? { tracestate: input.tracestate } : {}),
-            data: { refundId: input.refundId, paymentId: input.paymentId, cancelOperationId: input.cancelOperationId, cancelEventId: input.cancelEventId, reasonCode: 'EVIDENCE_MISMATCH' },
+            data: { refundId: input.refundId, paymentId: input.paymentId, cancelOperationId: input.cancelOperationId, cancelEventId: input.cancelEventId, reasonCode },
           } } });
         });
-        return 'RECONCILIACAO_NECESSARIA';
-      }
-      return 'PENDING';
-    }
   }
 }

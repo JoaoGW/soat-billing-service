@@ -120,6 +120,18 @@ describe('BillingMessageWorker', () => {
     expect(warning).toHaveBeenCalledWith('Reembolso requer reconciliação; consulte a inbox de Billing');
     await worker.onApplicationShutdown(); processOne.mockRestore(); warning.mockRestore();
   });
+  it('continua o lote de reconciliação quando uma operação falha', async () => {
+    Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_BILLING_COMPENSATION_EVIDENCE: 'true', ENABLE_MERCADO_PAGO_REFUND_COMMANDS: 'true', ENABLE_MERCADO_PAGO_REFUND_RECONCILIATION: 'true', MERCADO_PAGO_ACCESS_TOKEN: 'test-token', EXECUTION_MESSAGE_PUBLIC_KEY: publicKey, SERVICE_BUS_BILLING_EVIDENCE_SUBSCRIPTION: 'billing-evidence', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
+    const processOne = jest.spyOn(RefundCommandProcessor.prototype, 'processOne').mockResolvedValue('EMPTY');
+    const reconcile = jest.spyOn(ReconcileRefundService.prototype, 'execute').mockRejectedValueOnce(new Error('indisponível')).mockResolvedValueOnce('REFUNDED');
+    const warning = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    prisma.$queryRaw.mockResolvedValueOnce([{ operationId: 'failed' }, { operationId: 'succeeded' }]);
+    const worker = new BillingMessageWorker(); worker.onModuleInit(); await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(reconcile).toHaveBeenCalledTimes(2);
+    expect(prisma.inbox.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ operationId: 'succeeded' }) }));
+    expect(warning).toHaveBeenCalledWith('Falha ao reconciliar reembolso; operação permanece pendente');
+    await worker.onApplicationShutdown(); processOne.mockRestore(); reconcile.mockRestore(); warning.mockRestore();
+  });
   it('direciona comando de cobrança inválido ao consumidor habilitado', async () => {
     Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_MERCADO_PAGO_COMMANDS: 'true', MERCADO_PAGO_ACCESS_TOKEN: 'test-token', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
     const worker = new BillingMessageWorker(); worker.onModuleInit();

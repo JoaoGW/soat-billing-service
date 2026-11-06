@@ -27,7 +27,8 @@ describe('comando de reembolso', () => {
     submit.execute.mockResolvedValue('RECONCILIACAO_NECESSARIA');
     expect(await processor.processOne()).toBe('RECONCILIACAO_NECESSARIA');
     expect(confirm.execute).not.toHaveBeenCalled();
-    expect(db.inbox.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'RECONCILIACAO_NECESSARIA' }) }));
+    expect(tx.inbox.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'RECONCILIACAO_NECESSARIA' }) }));
+    expect(tx.outbox.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ payload: expect.objectContaining({ data: expect.objectContaining({ reasonCode: 'PROVIDER_RESULT_UNKNOWN' }) }) }) }));
     expect(submit.execute).toHaveBeenCalledTimes(1);
   });
   it('mantém pendente uma falha anterior ao envio e nunca chama o provedor', async () => {

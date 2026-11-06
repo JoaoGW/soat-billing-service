@@ -120,9 +120,13 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
       if (this.refundReconciler && this.prisma && Date.now() >= this.nextRefundReconciliation) {
         this.nextRefundReconciliation = Date.now() + 60000;
         const older = new Date(Date.now() - 60000);
-        const rows = await this.prisma.$queryRaw<Array<{ operationId: string }>>`SELECT r."operationId" FROM "Refund" r WHERE r."updatedAt" <= ${older} AND (r."status" IN ('IN_FLIGHT','RECONCILIACAO_NECESSARIA','PENDING_CONFIRMATION') OR (r."status"='REFUNDED' AND EXISTS (SELECT 1 FROM "Inbox" i WHERE i."consumer"='billing.refund-staging' AND i."operationId"=r."operationId" AND i."status" IN ('PENDING','RECONCILIACAO_NECESSARIA')))) ORDER BY random() LIMIT 1`;
-        if (rows[0] && await this.refundReconciler.execute(rows[0].operationId) === 'REFUNDED')
-          await this.prisma.inbox.updateMany({ where: { consumer: 'billing.refund-staging', operationId: rows[0].operationId, status: { in: ['PENDING', 'RECONCILIACAO_NECESSARIA'] } }, data: { status: 'REFUNDED', appliedAt: new Date() } });
+        const rows = await this.prisma.$queryRaw<Array<{ operationId: string }>>`SELECT r."operationId" FROM "Refund" r WHERE r."updatedAt" <= ${older} AND (r."status" IN ('IN_FLIGHT','RECONCILIACAO_NECESSARIA','PENDING_CONFIRMATION') OR (r."status"='REFUNDED' AND EXISTS (SELECT 1 FROM "Inbox" i WHERE i."consumer"='billing.refund-staging' AND i."operationId"=r."operationId" AND i."status" IN ('PENDING','RECONCILIACAO_NECESSARIA')))) ORDER BY random() LIMIT 20`;
+        for (const row of rows) {
+          try {
+            if (await this.refundReconciler.execute(row.operationId) === 'REFUNDED')
+              await this.prisma.inbox.updateMany({ where: { consumer: 'billing.refund-staging', operationId: row.operationId, status: { in: ['PENDING', 'RECONCILIACAO_NECESSARIA'] } }, data: { status: 'REFUNDED', appliedAt: new Date() } });
+          } catch { this.logger.warn('Falha ao reconciliar reembolso; operação permanece pendente'); }
+        }
       }
     }
     catch { this.logger.error('Falha ao processar outbox'); }

@@ -40,6 +40,18 @@ antes de sinalizar a Saga; implante uma versão do OS que conheça esse contrato
 antes de habilitar a publicação da nova versão de Billing. Confira a assinatura
 e a entrega na subscription e na DLQ no ambiente real.
 
+Em `PROVIDER_RESULT_UNKNOWN`, Billing não repete o pedido ao provedor. Quando a
+consulta canônica comprovar o reembolso, o evento de confirmação permite ao OS
+retomar a compensação somente com cancelamento autenticado e sem evidências ou
+operações físicas conflitantes. A retomada é auditada; dados incompletos ou
+conflitantes permanecem em reconciliação. `EVIDENCE_MISMATCH` não é resolvido
+automaticamente por uma confirmação financeira.
+
+O worker examina até 20 operações por ciclo, em ordem aleatória; falha em uma
+delas não interrompe as demais. Casos sem comprovação continuam pendentes para
+ciclos posteriores. Isso não garante prazo de atendimento para uma fila grande:
+acompanhe a idade e o volume dos incidentes.
+
 Os reconciliadores existentes não cobrem automaticamente toda a matriz de
 incidentes; casos sem comprovação continuam pendentes para análise. Valide
 primeiro no ambiente de teste do Mercado Pago e acompanhe outbox, inbox e DLQ.

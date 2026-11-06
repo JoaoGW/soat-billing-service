@@ -41,7 +41,10 @@
               "minLength": 1
             },
             "reasonCode": {
-              "const": "EVIDENCE_MISMATCH"
+              "enum": [
+                "EVIDENCE_MISMATCH",
+                "PROVIDER_RESULT_UNKNOWN"
+              ]
             }
           }
         }

@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 import { PrepareRefundService, SubmitRefundService, ConfirmRefundService } from '../../src/application/reembolsar-pagamento';
+import { ReconcileRefundService } from '../../src/application/reconciliar-reembolso';
 
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error('DATABASE_URL de teste é obrigatória');
@@ -112,6 +113,24 @@ describe('reembolso em PostgreSQL com provedor simulado', () => {
     expect(events).toHaveLength(1);
     const dir = resolve(process.cwd(), 'docs/contracts/messages'); const ajv = new Ajv(); addFormats(ajv); ajv.addSchema(JSON.parse(readFileSync(resolve(dir, 'envelope.schema.json'), 'utf8')));
     expect(ajv.validate(JSON.parse(readFileSync(resolve(dir, 'billing.refund-blocked.v1.schema.json'), 'utf8')), events[0].payload)).toBe(true);
+  });
+
+  it('avisa resultado incerto e confirma depois sem repetir o pedido ao provedor', async () => {
+    const x = await setup();
+    const body = { messageId: x.input.messageId, operationId: x.input.operationId, correlationId: x.input.correlationId, osId: x.input.osId, sagaId: x.input.sagaId, filialId: x.input.filialId, type: 'billing.refund-payment.v1', schemaVersion: 1, occurredAt: '2030-01-01T00:00:00Z', producer: 'soat-os-service', aggregateType: 'saga', aggregateId: x.input.sagaId, aggregateVersion: 1, causationId: 'cause', data: { refundId: x.input.refundId, paymentId: x.input.paymentId, cancelOperationId: x.input.cancelOperationId, cancelEventId: x.input.cancelEventId, reason: x.input.reason } };
+    const validate = refundCommandValidator(resolve(process.cwd(), 'docs/contracts/messages'));
+    const receiver = { completeMessage: jest.fn(), abandonMessage: jest.fn(), deadLetterMessage: jest.fn() };
+    await new RefundCommandConsumer(db, validate).process({ body, messageId: body.messageId } as unknown as ServiceBusReceivedMessage, receiver as unknown as ServiceBusReceiver);
+    const refundedOrder = { ...x.order, status: 'refunded', transactions: { payments: [{ ...x.order.transactions.payments[0], status: 'refunded', refunded_amount: '50.01' }], refunds: [{ id: x.providerRefundId, transaction_id: x.order.transactions.payments[0].id, status: 'processed', amount: '50.01' }] } };
+    const provider = { get: jest.fn().mockResolvedValueOnce(x.order).mockResolvedValue(refundedOrder), refund: jest.fn().mockRejectedValue(new Error('resposta perdida')) };
+    const processor = new RefundCommandProcessor(db, prepare, new SubmitRefundService(db, provider), new ConfirmRefundService(db, provider), validate);
+    expect(await processor.processOne()).toBe('RECONCILIACAO_NECESSARIA');
+    const incidents = await db.outbox.findMany({ where: { type: 'billing.refund-blocked.v1', payload: { path: ['sagaId'], equals: x.input.sagaId } } });
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0].payload).toMatchObject({ data: { reasonCode: 'PROVIDER_RESULT_UNKNOWN' } });
+    expect(await new ReconcileRefundService(db, provider).execute(x.input.operationId)).toBe('REFUNDED');
+    expect(provider.refund).toHaveBeenCalledTimes(1);
+    expect(await db.outbox.count({ where: { type: 'billing.payment-refunded.v1', payload: { path: ['sagaId'], equals: x.input.sagaId } } })).toBe(1);
   });
 
 });
