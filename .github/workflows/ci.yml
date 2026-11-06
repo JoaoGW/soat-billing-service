@@ -102,11 +102,21 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     environment: hml
+    concurrency:
+      group: billing-deploy-hml
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
     steps:
       - uses: actions/checkout@v4
+      - name: Impedir deploy de revisão ultrapassada
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPROVED_SHA: ${{ github.sha }}
+        run: |
+          current="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/development" --jq '.object.sha')"
+          [[ "$current" == "$APPROVED_SHA" && "$(git rev-parse HEAD)" == "$APPROVED_SHA" ]] || { echo 'A branch avançou ou o checkout não corresponde ao CI'; exit 1; }
       - uses: azure/login@v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
