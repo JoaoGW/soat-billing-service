@@ -84,14 +84,16 @@ Para gerar o cliente e aplicar migrations ao banco dedicado configurado em
 Não executar migrations sobre o banco legado.
 `npm run test:integration` exige `DATABASE_URL` para um banco local cujo nome
 termine em `_test`, com migrations aplicadas; não ignora ausência de ambiente.
+Use um banco descartável dedicado à suíte: comandos pendentes de outras
+execuções podem ser selecionados pelo worker e interferir nas verificações.
 
 A intenção de cobrança é gravada com chave idempotente antes do envio. O envio
 reivindica a intenção, não repete operações em voo e sinaliza reconciliação em
 caso de resposta incerta. O consumidor opcional grava inbox e emite evento de
 cobrança criada na mesma transação da confirmação local. Prazo vencido produz
 evento de falha antes do ACK. Outros resultados incertos permanecem para retry
-e reconciliação; esgotadas as tentativas, seguem para a DLQ. Ainda falta uma
-ferramenta operacional de reconciliação e tratamento das demais falhas.
+e reconciliação; esgotadas as tentativas, seguem para a DLQ. O procedimento
+operacional e os reconciliadores disponíveis não cobrem todas as falhas.
 
 O consumidor de cobrança exige `ENABLE_SERVICE_BUS_WORKER=true`,
 `ENABLE_MERCADO_PAGO_COMMANDS=true` e `MERCADO_PAGO_ACCESS_TOKEN`; ambos os
@@ -145,7 +147,8 @@ cria uma segunda order. Um envio em voo aguarda dois minutos. A recuperação
 exige uma notificação com o ID da order; sem ela, ou se a consulta for
 divergente, a cobrança permanece em reconciliação para análise operacional.
 Valide o comportamento com contas de teste do Mercado Pago antes de habilitar.
-O fluxo completo ainda precisa de teste distribuído com broker e provedor.
+Os testes distribuídos usam broker emulado e provedor simulado; o fluxo ainda
+precisa ser validado com o broker e o provedor reais.
 
 O [procedimento de reconciliação](docs/reconciliacao-operacional.md) descreve
 ações seguras para resultados incertos. Permanecem pendentes validação real do
