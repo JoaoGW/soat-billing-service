@@ -174,3 +174,11 @@ compatibilidade exercita o interceptor HTTP do Nest com filtro assíncrono; ele
 não reproduz todas as condições do aviso. Remova o override quando uma versão
 compatível do Nest incorporar a correção e valide novamente build, testes e
 auditoria. A atualização para Nest 12 também exige adaptar o Jest a módulos ESM.
+
+A imagem de runtime remove dependências de desenvolvimento e opcionais após
+gerar o cliente Prisma. Isso mantém o cliente e exclui o CLI opcional `prisma`
+e sua cadeia `@prisma/config`/`deepmerge-ts` do runtime. A imagem separada de
+migração conserva o CLI e ainda precisa de tratamento dos alertas dessa cadeia.
+O CI constrói as duas imagens, testa o cliente com PostgreSQL e verifica o
+healthcheck e as migrations; integrações com Azure e Mercado Pago reais exigem
+validação no ambiente configurado.

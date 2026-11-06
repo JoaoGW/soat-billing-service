@@ -12,7 +12,7 @@ USER node
 CMD ["./node_modules/.bin/prisma", "migrate", "deploy", "--schema", "prisma/schema.prisma"]
 
 FROM build AS production-dependencies
-RUN npm prune --omit=dev
+RUN npm prune --omit=dev --omit=optional
 
 FROM node:24-alpine AS runtime
 ENV NODE_ENV=production
