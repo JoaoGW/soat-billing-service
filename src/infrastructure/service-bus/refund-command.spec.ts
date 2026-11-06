@@ -23,4 +23,18 @@ describe('comando de reembolso', () => {
   it('mantém resultado em voo sem tentar novo pedido', async () => {
     submit.execute.mockResolvedValue('IN_FLIGHT'); expect(await processor.processOne()).toBe('PENDING'); expect(confirm.execute).not.toHaveBeenCalled();
   });
+  it('encaminha resposta financeira incerta à reconciliação sem confirmar nem repetir o reembolso', async () => {
+    submit.execute.mockResolvedValue('RECONCILIACAO_NECESSARIA');
+    expect(await processor.processOne()).toBe('RECONCILIACAO_NECESSARIA');
+    expect(confirm.execute).not.toHaveBeenCalled();
+    expect(db.inbox.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'RECONCILIACAO_NECESSARIA' }) }));
+    expect(submit.execute).toHaveBeenCalledTimes(1);
+  });
+  it('mantém pendente uma falha anterior ao envio e nunca chama o provedor', async () => {
+    prepare.execute.mockRejectedValue(new Error('evidência divergente ou banco indisponível'));
+    expect(await processor.processOne()).toBe('PENDING');
+    expect(submit.execute).not.toHaveBeenCalled();
+    expect(confirm.execute).not.toHaveBeenCalled();
+    expect(db.inbox.updateMany).not.toHaveBeenCalled();
+  });
 });

@@ -40,7 +40,7 @@ export class RefundCommandProcessor {
     const rows = await this.db.$queryRaw<Array<{ messageId: string; payload: unknown }>>`SELECT s."messageId", s."payload" FROM "Inbox" s WHERE s."consumer" = 'billing.refund-staging' AND s."status" = 'PENDING' AND EXISTS (SELECT 1 FROM "Inbox" e WHERE e."consumer" = 'billing.compensation-evidence' AND e."messageId" = s."payload"->'data'->>'cancelEventId' AND e."status" = 'APPLIED') ORDER BY random() LIMIT 1`;
     const row = rows[0]; if (!row) return 'EMPTY';
     if (!this.validate(row.payload)) throw new Error('Comando persistido inválido');
-    const event = row.payload as Envelope; const input: PrepareRefund = { messageId: event.messageId, operationId: event.operationId, correlationId: event.correlationId, osId: event.osId, sagaId: event.sagaId, filialId: event.filialId, ...event.data };
+    const event = row.payload as Envelope; const input: PrepareRefund = { messageId: event.messageId, operationId: event.operationId, correlationId: event.correlationId, osId: event.osId, sagaId: event.sagaId, filialId: event.filialId, ...(event.traceparent ? { traceparent: event.traceparent } : {}), ...(event.tracestate ? { tracestate: event.tracestate } : {}), ...event.data };
     const evidence = await this.db.inbox.findUnique({ where: { consumer_messageId: { consumer: 'billing.compensation-evidence', messageId: input.cancelEventId } } });
     if (!evidence) return 'PENDING';
     try {

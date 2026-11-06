@@ -1,5 +1,17 @@
 # Billing Service — Fase 4
 
+O CI prepara publicação e deploy em HML somente para `push` em `development`
+após qualidade e integração do mesmo SHA. A variável de repositório
+`HML_DEPLOY_ENABLED` deve ser `true`; ausente ou diferente de `true`, nenhuma
+imagem é publicada e nenhum deploy ocorre. O ambiente `hml` deve fornecer OIDC
+(`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`), nomes do AKS e
+`BILLING_WORKLOAD_CLIENT_ID`. O namespace precisa ter `soat-ghcr-pull`,
+`soat-billing-runtime` e `soat-billing-migration`, além da ServiceAccount
+`soat-billing-migrator`; runtime e migrations usam credenciais distintas.
+Esses secrets devem ser provisionados de forma segura pelo ambiente, por exemplo
+sincronizados do Key Vault. A imagem de migration do mesmo SHA roda antes do
+rollout. Este fluxo ainda precisa de ensaio no cluster autorizado.
+
 Billing é responsável por orçamento, aprovação, cobrança, pagamento e
 reembolso. Seu PostgreSQL é exclusivo do serviço; nenhum outro serviço deve
 ler suas tabelas. A comunicação assíncrona usa comandos e eventos assinados,
@@ -56,6 +68,9 @@ verifica 80% por métrica no serviço e, separadamente, na infraestrutura com
 `npm run test:coverage-infrastructure`; os relatórios são publicados como
 artefatos identificados pelo SHA da execução. O acesso ao repositório privado
 é necessário para visualizar as evidências.
+O CI executa `npm run quality:sonarjs` com regras selecionadas de lógica e
+segurança da SonarSource. Esse gate local não substitui todos os recursos do
+SonarQube nem seu painel.
 
 Traces e métricas OpenTelemetry são opcionais: defina `OBSERVABILITY_ENABLED=true`
 e `NEW_RELIC_LICENSE_KEY` no secret do ambiente; `OTEL_SERVICE_VERSION` deve
@@ -132,10 +147,10 @@ divergente, a cobrança permanece em reconciliação para análise operacional.
 Valide o comportamento com contas de teste do Mercado Pago antes de habilitar.
 O fluxo completo ainda precisa de teste distribuído com broker e provedor.
 
-Pendentes: cobertura das demais falhas definitivas,
-reprocessamento operacional e teste real do SMTP e Service Bus, Orders API e webhook Mercado
-Pago, reconciliação,
-Sonar, deploy automatizado, instrumentação e testes distribuídos.
+O [procedimento de reconciliação](docs/reconciliacao-operacional.md) descreve
+ações seguras para resultados incertos. Permanecem pendentes validação real do
+SMTP, Service Bus, Orders API, webhook e deploy, além de casos não cobertos por
+reconciliação automática e análise mais ampla que as regras SonarJS locais.
 
 O transporte exige assinatura Ed25519 para autenticar o OS. Quando o worker é
 habilitado, configure `OS_MESSAGE_PUBLIC_KEY` e a chave privada exclusiva de

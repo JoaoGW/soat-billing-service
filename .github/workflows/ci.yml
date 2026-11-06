@@ -17,11 +17,13 @@ jobs:
       - run: npm ci
       - run: npm run db:generate
       - run: npm run lint
+      - run: npm run quality:sonarjs
       - run: npm run build
       - run: npm run test:observability-local
       - run: npm run test:cov -- --watchman=false
       - run: npm run test:coverage-infrastructure -- --watchman=false
       - run: npm run test:contracts
+      - run: npm run test:delivery
       - run: kubectl kustomize deploy/kustomize/overlays/hml > /tmp/service-hml.yaml
       - uses: actions/upload-artifact@v4
         with:
@@ -56,3 +58,80 @@ jobs:
       - run: npm run db:generate
       - run: npm run db:migrate:deploy
       - run: npm run test:integration
+  publish:
+    name: Publicar imagens Billing aprovadas
+    needs: [quality, integration]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/development' && vars.HML_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          push: true
+          tags: ghcr.io/joaogw/soat-billing-service:${{ github.sha }}
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: migration
+          push: true
+          tags: ghcr.io/joaogw/soat-billing-service:${{ github.sha }}-migration
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+  deploy_hml:
+    name: Deploy Billing HML
+    needs: publish
+    runs-on: ubuntu-latest
+    environment: hml
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: azure/use-kubelogin@v1
+      - name: Preparar cluster e validar pré-requisitos
+        env:
+          AKS_RESOURCE_GROUP: ${{ vars.AKS_RESOURCE_GROUP }}
+          AKS_NAME: ${{ vars.AKS_NAME }}
+        run: |
+          az aks get-credentials --resource-group "$AKS_RESOURCE_GROUP" --name "$AKS_NAME" --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+          kubectl -n hml get secret soat-ghcr-pull soat-billing-runtime soat-billing-migration >/dev/null
+          kubectl -n hml get serviceaccount soat-billing-migrator >/dev/null
+      - name: Migrar banco próprio antes do rollout
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          [[ "$IMAGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          job="billing-migrate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          kubectl -n hml create job "$job" --image="ghcr.io/joaogw/soat-billing-service:${IMAGE_SHA}-migration" --dry-run=client -o json > "$RUNNER_TEMP/job.json"
+          python3 -c 'import json,sys; p=sys.argv[1]; j=json.load(open(p)); j["spec"]["backoffLimit"]=0; j["spec"]["ttlSecondsAfterFinished"]=86400; t=j["spec"]["template"]; t.setdefault("metadata",{}).setdefault("labels",{})["azure.workload.identity/use"]="true"; s=t["spec"]; s["serviceAccountName"]="soat-billing-migrator"; s["imagePullSecrets"]=[{"name":"soat-ghcr-pull"}]; s["containers"][0]["envFrom"]=[{"secretRef":{"name":"soat-billing-migration"}}]; json.dump(j,open(p,"w"))' "$RUNNER_TEMP/job.json"
+          kubectl apply -f "$RUNNER_TEMP/job.json"
+          kubectl -n hml wait --for=condition=complete "job/$job" --timeout=300s
+      - name: Aplicar exatamente a imagem do SHA aprovado
+        env:
+          WORKLOAD_CLIENT_ID: ${{ vars.BILLING_WORKLOAD_CLIENT_ID }}
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          [[ "$WORKLOAD_CLIENT_ID" =~ ^[0-9a-fA-F-]{36}$ ]]
+          [[ "$IMAGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          kubectl kustomize deploy/kustomize/overlays/hml > "$RUNNER_TEMP/rendered.yaml"
+          sed -i "s/__WORKLOAD_CLIENT_ID__/$WORKLOAD_CLIENT_ID/g; s/sha-not-set/$IMAGE_SHA/g" "$RUNNER_TEMP/rendered.yaml"
+          if grep -Eq '__WORKLOAD_CLIENT_ID__|sha-not-set' "$RUNNER_TEMP/rendered.yaml"; then echo 'Manifesto incompleto'; exit 1; fi
+          kubectl apply -f "$RUNNER_TEMP/rendered.yaml"
+          kubectl -n hml rollout status deployment/soat-billing-service --timeout=300s

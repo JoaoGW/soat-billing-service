@@ -66,7 +66,7 @@ describe('reembolso em PostgreSQL com provedor simulado', () => {
   });
   it('persiste comando antes do ACK e processa reembolso após evidência', async () => {
     const x = await setup();
-    const body = { messageId: x.input.messageId, operationId: x.input.operationId, correlationId: x.input.correlationId, osId: x.input.osId, sagaId: x.input.sagaId, filialId: x.input.filialId, type: 'billing.refund-payment.v1', schemaVersion: 1, occurredAt: '2030-01-01T00:00:00Z', producer: 'soat-os-service', aggregateType: 'saga', aggregateId: x.input.sagaId, aggregateVersion: 1, causationId: 'cause', data: { refundId: x.input.refundId, paymentId: x.input.paymentId, cancelOperationId: x.input.cancelOperationId, cancelEventId: x.input.cancelEventId, reason: x.input.reason } };
+    const body = { messageId: x.input.messageId, operationId: x.input.operationId, correlationId: x.input.correlationId, osId: x.input.osId, sagaId: x.input.sagaId, filialId: x.input.filialId, type: 'billing.refund-payment.v1', schemaVersion: 1, occurredAt: '2030-01-01T00:00:00Z', producer: 'soat-os-service', aggregateType: 'saga', aggregateId: x.input.sagaId, aggregateVersion: 1, causationId: 'cause', traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01', tracestate: 'vendor=state', data: { refundId: x.input.refundId, paymentId: x.input.paymentId, cancelOperationId: x.input.cancelOperationId, cancelEventId: x.input.cancelEventId, reason: x.input.reason } };
     const validate = refundCommandValidator(resolve(process.cwd(), 'docs/contracts/messages')); const receiver = { completeMessage: jest.fn(), abandonMessage: jest.fn(), deadLetterMessage: jest.fn() };
     const message = { body, messageId: body.messageId } as unknown as ServiceBusReceivedMessage;
     await new RefundCommandConsumer(db, validate).process(message, receiver as unknown as ServiceBusReceiver);
@@ -77,6 +77,8 @@ describe('reembolso em PostgreSQL com provedor simulado', () => {
     for (let i = 0; i < 100; i++) { await processor.processOne(); if ((await db.refund.findUnique({ where: { operationId: x.input.operationId } }))?.status === 'REFUNDED') break; }
     expect((await db.refund.findUniqueOrThrow({ where: { operationId: x.input.operationId } })).status).toBe('REFUNDED');
     expect(provider.refund).toHaveBeenCalledTimes(1);
+    const published = await db.$queryRaw<Array<{ payload: unknown }>>`SELECT "payload" FROM "Outbox" WHERE "type"='billing.payment-refunded.v1' AND "payload"->>'sagaId'=${x.input.sagaId}`;
+    expect(published).toEqual([expect.objectContaining({ payload: expect.objectContaining({ traceparent: body.traceparent, tracestate: body.tracestate }) })]);
   });
 
 });

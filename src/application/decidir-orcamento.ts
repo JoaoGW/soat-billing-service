@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { decide, Decision, Quote } from '../domain/orcamento';
+import { captureTrace } from '../infrastructure/observability/trace-context';
 
 export interface DecideQuoteInput {
   quoteId: string;
@@ -71,6 +72,7 @@ export class QuoteDecisionService {
                 aggregateType: 'quote', aggregateId: quote.id, aggregateVersion: quote.revision + 2,
                 osId: quote.osId, sagaId: quote.sagaId, filialId: quote.filialId,
                 correlationId: input.correlationId, causationId: operationId, operationId,
+                ...captureTrace(),
                 data: { quoteId: quote.id, quoteVersion: quote.version, clientId: quote.clientId },
               },
             } });

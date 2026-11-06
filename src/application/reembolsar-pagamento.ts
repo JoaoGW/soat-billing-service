@@ -5,8 +5,9 @@ import { verifyCanonicalPayment, verifyCanonicalRefund } from '../domain/verific
 export interface PrepareRefund {
   messageId: string; operationId: string; correlationId: string; refundId: string; paymentId: string; osId: string; sagaId: string; filialId: string;
   cancelOperationId: string; cancelEventId: string; reason: string;
+  traceparent?: string; tracestate?: string;
 }
-type RefundIntent = { refundId: string; providerKey: string; messageId: string; correlationId: string; sagaId: string; filialId: string; cancelOperationId: string; cancelEventId: string; reason: string };
+type RefundIntent = { refundId: string; providerKey: string; messageId: string; correlationId: string; sagaId: string; filialId: string; cancelOperationId: string; cancelEventId: string; reason: string; traceparent?: string; tracestate?: string };
 type Provider = { get(orderId: string): Promise<Record<string, unknown>>; refund(orderId: string, key: string): Promise<Record<string, unknown>> };
 
 /** Caller must validate the authenticated Saga command; cancellation evidence must already be trusted and persisted. */
@@ -36,7 +37,7 @@ export class PrepareRefundService {
           const payment = await tx.payment.findUnique({ where: { id: input.paymentId }, include: { charge: { include: { quote: true } } } });
           if (!payment || payment.charge.osId !== input.osId || payment.charge.quote.sagaId !== input.sagaId || payment.charge.quote.filialId !== input.filialId || payment.currency !== 'BRL' || !payment.charge.providerOrderId || !['PAID', 'RECONCILIACAO_NECESSARIA'].includes(payment.charge.status)) throw new Error('Pagamento não permite reembolso');
           if (await tx.refund.findFirst({ where: { paymentId: input.paymentId }, select: { id: true } })) throw new Error('Reembolso já existente');
-          const result = { refundId: input.refundId, providerKey: randomUUID(), messageId: input.messageId, correlationId: input.correlationId, sagaId: input.sagaId, filialId: input.filialId, cancelOperationId: input.cancelOperationId, cancelEventId: input.cancelEventId, reason: input.reason };
+          const result = { refundId: input.refundId, providerKey: randomUUID(), messageId: input.messageId, correlationId: input.correlationId, sagaId: input.sagaId, filialId: input.filialId, cancelOperationId: input.cancelOperationId, cancelEventId: input.cancelEventId, reason: input.reason, ...(input.traceparent ? { traceparent: input.traceparent } : {}), ...(input.tracestate ? { tracestate: input.tracestate } : {}) };
           await tx.refund.create({ data: { id: input.refundId, paymentId: input.paymentId, operationId: input.operationId, status: 'INTENT_RECORDED', amountInCents: payment.amountInCents } });
           await tx.commandOperation.create({ data: { consumer, operationId: input.operationId, payloadHash: fingerprint, result } });
           await recordInbox(); return result;
@@ -112,7 +113,7 @@ export class ConfirmRefundService {
       const messageId = randomUUID(); const type = 'billing.payment-refunded.v1';
       await tx.outbox.create({ data: { messageId, type, payload: {
         messageId, type, schemaVersion: 1, occurredAt: new Date().toISOString(), producer: 'soat-billing-service', aggregateType: 'refund', aggregateId: refund.id, aggregateVersion: 1,
-        osId: charge.osId, sagaId: intent.sagaId, filialId: intent.filialId, correlationId: intent.correlationId, causationId: intent.messageId, operationId,
+        osId: charge.osId, sagaId: intent.sagaId, filialId: intent.filialId, correlationId: intent.correlationId, causationId: intent.messageId, operationId, ...(intent.traceparent ? { traceparent: intent.traceparent } : {}), ...(intent.tracestate ? { tracestate: intent.tracestate } : {}),
         data: { refundId: refund.id, paymentId: refund.paymentId, chargeId: charge.id, quoteId: charge.quoteId, quoteVersion: charge.quote.version, amountInCents: refund.amountInCents, currency: refund.payment.currency, providerOrderId: charge.providerOrderId!, providerRefundId: refund.providerRefundId!, cancelOperationId: intent.cancelOperationId },
       } } });
       await tx.refund.update({ where: { id: refund.id }, data: { status: 'REFUNDED' } });

@@ -16,6 +16,7 @@ import { CompensationEvidenceConsumer, evidenceValidator } from './compensation-
 import { RefundCommandConsumer, RefundCommandProcessor, refundCommandValidator } from './refund-command';
 import { PrepareRefundService, SubmitRefundService, ConfirmRefundService } from '../../application/reembolsar-pagamento';
 import { ReconcileRefundService } from '../../application/reconciliar-reembolso';
+import { withMessageTrace } from '../observability/message-trace';
 
 @Injectable()
 export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown {
@@ -95,6 +96,7 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
         if (!verifier.verify(message.body, message.applicationProperties?.signature)) {
           await receiver.deadLetterMessage(message, { deadLetterReason: 'UnauthenticatedProducer', deadLetterErrorDescription: 'Assinatura inválida' }); return;
         }
+        return withMessageTrace(message.body, async () => {
         const isRefund = message.subject === 'billing.refund-payment.v1' || (message.body && typeof message.body === 'object' && message.body.type === 'billing.refund-payment.v1');
         if (isRefund) return refundConsumer ? refundConsumer.process(message, receiver) : receiver.abandonMessage(message);
         const isCharge = message.subject === 'billing.create-charge.v1' ||
@@ -102,6 +104,7 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
         if (!isCharge) return consumer.process(message, receiver);
         if (!chargeConsumer) return receiver.abandonMessage(message);
         return chargeConsumer.process(message, receiver);
+        });
       },
       processError: async (args) => { this.logger.error(`Falha no transporte Service Bus: ${args.errorSource}`); },
     }, { autoCompleteMessages: false, maxConcurrentCalls: 1 });
