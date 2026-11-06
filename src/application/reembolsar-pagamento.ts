@@ -10,6 +10,11 @@ export interface PrepareRefund {
 type RefundIntent = { refundId: string; providerKey: string; messageId: string; correlationId: string; sagaId: string; filialId: string; cancelOperationId: string; cancelEventId: string; reason: string; traceparent?: string; tracestate?: string };
 type Provider = { get(orderId: string): Promise<Record<string, unknown>>; refund(orderId: string, key: string): Promise<Record<string, unknown>> };
 
+/** Evidência persistida e autenticada existe, mas não comprova esta operação. */
+export class RefundEvidenceMismatchError extends Error {
+  constructor() { super('Cancelamento sem confirmação de não início'); }
+}
+
 /** Caller must validate the authenticated Saga command; cancellation evidence must already be trusted and persisted. */
 export class PrepareRefundService {
   constructor(private readonly db: PrismaClient) {}
@@ -33,7 +38,8 @@ export class PrepareRefundService {
           if (message) throw new Error('Mensagem sem operação correspondente');
           const evidence = await tx.inbox.findUnique({ where: { consumer_messageId: { consumer: 'billing.compensation-evidence', messageId: input.cancelEventId } } });
           const proof = evidence?.payload as { messageId?: string; type?: string; producer?: string; operationId?: string; osId?: string; sagaId?: string; filialId?: string; data?: { outcome?: string } } | undefined;
-          if (!evidence || evidence.status !== 'APPLIED' || !proof || proof.messageId !== input.cancelEventId || proof.type !== 'execution.work-cancelled.v1' || proof.producer !== 'soat-execution-service' || proof.operationId !== input.cancelOperationId || proof.osId !== input.osId || proof.sagaId !== input.sagaId || proof.filialId !== input.filialId || proof.data?.outcome !== 'CANCELLED') throw new Error('Cancelamento sem confirmação de não início');
+          if (!evidence || evidence.status !== 'APPLIED') throw new Error('Cancelamento sem confirmação de não início');
+          if (!proof || proof.messageId !== input.cancelEventId || proof.type !== 'execution.work-cancelled.v1' || proof.producer !== 'soat-execution-service' || proof.operationId !== input.cancelOperationId || proof.osId !== input.osId || proof.sagaId !== input.sagaId || proof.filialId !== input.filialId || proof.data?.outcome !== 'CANCELLED') throw new RefundEvidenceMismatchError();
           const payment = await tx.payment.findUnique({ where: { id: input.paymentId }, include: { charge: { include: { quote: true } } } });
           if (!payment || payment.charge.osId !== input.osId || payment.charge.quote.sagaId !== input.sagaId || payment.charge.quote.filialId !== input.filialId || payment.currency !== 'BRL' || !payment.charge.providerOrderId || !['PAID', 'RECONCILIACAO_NECESSARIA'].includes(payment.charge.status)) throw new Error('Pagamento não permite reembolso');
           if (await tx.refund.findFirst({ where: { paymentId: input.paymentId }, select: { id: true } })) throw new Error('Reembolso já existente');

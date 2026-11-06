@@ -3,6 +3,7 @@ import { MessageSigner } from './message-signature';
 import { WorkloadIdentityCredential } from '@azure/identity';
 import { ServiceBusClient } from '@azure/service-bus';
 import { PrismaClient } from '@prisma/client';
+import { Logger } from '@nestjs/common';
 import { OutboxDispatcher } from '../../application/publicar-outbox';
 import { BillingMessageWorker } from './worker';
 import { RefundCommandProcessor } from './refund-command';
@@ -110,6 +111,14 @@ describe('BillingMessageWorker', () => {
     expect(reconcile).toHaveBeenCalledWith('op');
     expect(prisma.inbox.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ operationId: 'op', consumer: 'billing.refund-staging' }), data: expect.objectContaining({ status: 'REFUNDED' }) }));
     await worker.onApplicationShutdown(); processOne.mockRestore(); reconcile.mockRestore();
+  });
+  it('sinaliza reconciliação de reembolso sem registrar dados financeiros', async () => {
+    Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_BILLING_COMPENSATION_EVIDENCE: 'true', ENABLE_MERCADO_PAGO_REFUND_COMMANDS: 'true', MERCADO_PAGO_ACCESS_TOKEN: 'test-token', EXECUTION_MESSAGE_PUBLIC_KEY: publicKey, SERVICE_BUS_BILLING_EVIDENCE_SUBSCRIPTION: 'billing-evidence', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
+    const processOne = jest.spyOn(RefundCommandProcessor.prototype, 'processOne').mockResolvedValue('RECONCILIACAO_NECESSARIA');
+    const warning = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const worker = new BillingMessageWorker(); worker.onModuleInit(); await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(warning).toHaveBeenCalledWith('Reembolso requer reconciliação; consulte a inbox de Billing');
+    await worker.onApplicationShutdown(); processOne.mockRestore(); warning.mockRestore();
   });
   it('direciona comando de cobrança inválido ao consumidor habilitado', async () => {
     Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_MERCADO_PAGO_COMMANDS: 'true', MERCADO_PAGO_ACCESS_TOKEN: 'test-token', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });

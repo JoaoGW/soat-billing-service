@@ -4,7 +4,7 @@ import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 import { PrismaClient } from '@prisma/client';
 import { ServiceBusReceivedMessage, ServiceBusReceiver } from '@azure/service-bus';
-import { PrepareRefund, PrepareRefundService, SubmitRefundService, ConfirmRefundService } from '../../application/reembolsar-pagamento';
+import { PrepareRefund, PrepareRefundService, SubmitRefundService, ConfirmRefundService, RefundEvidenceMismatchError } from '../../application/reembolsar-pagamento';
 
 type Envelope = Omit<PrepareRefund, 'refundId' | 'paymentId' | 'cancelOperationId' | 'cancelEventId' | 'reason'> & { type: string; data: Pick<PrepareRefund, 'refundId' | 'paymentId' | 'cancelOperationId' | 'cancelEventId' | 'reason'> };
 type Receiver = Pick<ServiceBusReceiver, 'completeMessage' | 'abandonMessage' | 'deadLetterMessage'>;
@@ -52,6 +52,12 @@ export class RefundCommandProcessor {
         return outcome;
       }
       return 'PENDING';
-    } catch { return 'PENDING'; }
+    } catch (error) {
+      if (error instanceof RefundEvidenceMismatchError) {
+        await this.db.inbox.updateMany({ where: { consumer: 'billing.refund-staging', messageId: event.messageId, status: 'PENDING' }, data: { status: 'RECONCILIACAO_NECESSARIA', appliedAt: new Date() } });
+        return 'RECONCILIACAO_NECESSARIA';
+      }
+      return 'PENDING';
+    }
   }
 }

@@ -114,7 +114,9 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
   private async poll(): Promise<void> {
     if (this.stopping || !this.dispatcher) return;
     try {
-      await this.dispatcher.dispatchOne(); await this.refundProcessor?.processOne();
+      await this.dispatcher.dispatchOne();
+      if (await this.refundProcessor?.processOne() === 'RECONCILIACAO_NECESSARIA')
+        this.logger.warn('Reembolso requer reconciliação; consulte a inbox de Billing');
       if (this.refundReconciler && this.prisma && Date.now() >= this.nextRefundReconciliation) {
         this.nextRefundReconciliation = Date.now() + 60000;
         const older = new Date(Date.now() - 60000);

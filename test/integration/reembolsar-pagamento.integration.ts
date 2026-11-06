@@ -81,4 +81,24 @@ describe('reembolso em PostgreSQL com provedor simulado', () => {
     expect(published).toEqual([expect.objectContaining({ payload: expect.objectContaining({ traceparent: body.traceparent, tracestate: body.tracestate }) })]);
   });
 
+  it('marca evidência divergente para reconciliação sem criar ou enviar reembolso', async () => {
+    const x = await setup();
+    await db.inbox.update({
+      where: { consumer_messageId: { consumer: 'billing.compensation-evidence', messageId: x.input.cancelEventId } },
+      data: { payload: { messageId: x.input.cancelEventId, type: 'execution.work-cancelled.v1', producer: 'soat-execution-service', operationId: x.input.cancelOperationId, osId: x.input.osId, sagaId: x.input.sagaId, filialId: x.input.filialId, data: { outcome: 'ALREADY_STARTED' } } },
+    });
+    const body = { messageId: x.input.messageId, operationId: x.input.operationId, correlationId: x.input.correlationId, osId: x.input.osId, sagaId: x.input.sagaId, filialId: x.input.filialId, type: 'billing.refund-payment.v1', schemaVersion: 1, occurredAt: '2030-01-01T00:00:00Z', producer: 'soat-os-service', aggregateType: 'saga', aggregateId: x.input.sagaId, aggregateVersion: 1, causationId: 'cause', data: { refundId: x.input.refundId, paymentId: x.input.paymentId, cancelOperationId: x.input.cancelOperationId, cancelEventId: x.input.cancelEventId, reason: x.input.reason } };
+    const validate = refundCommandValidator(resolve(process.cwd(), 'docs/contracts/messages'));
+    const receiver = { completeMessage: jest.fn(), abandonMessage: jest.fn(), deadLetterMessage: jest.fn() };
+    await new RefundCommandConsumer(db, validate).process({ body, messageId: body.messageId } as unknown as ServiceBusReceivedMessage, receiver as unknown as ServiceBusReceiver);
+    expect(receiver.completeMessage).toHaveBeenCalledTimes(1);
+    const provider = { get: jest.fn(), refund: jest.fn() };
+    const processor = new RefundCommandProcessor(db, prepare, new SubmitRefundService(db, provider), new ConfirmRefundService(db, provider), validate);
+    expect(await processor.processOne()).toBe('RECONCILIACAO_NECESSARIA');
+    expect((await db.inbox.findUniqueOrThrow({ where: { consumer_messageId: { consumer: 'billing.refund-staging', messageId: body.messageId } } })).status).toBe('RECONCILIACAO_NECESSARIA');
+    expect(await db.refund.count({ where: { paymentId: x.input.paymentId } })).toBe(0);
+    expect(provider.get).not.toHaveBeenCalled();
+    expect(provider.refund).not.toHaveBeenCalled();
+  });
+
 });

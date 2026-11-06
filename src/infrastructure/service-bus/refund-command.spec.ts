@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { ServiceBusReceivedMessage, ServiceBusReceiver } from '@azure/service-bus';
 import { RefundCommandConsumer, RefundCommandProcessor } from './refund-command';
-import { PrepareRefundService, SubmitRefundService, ConfirmRefundService } from '../../application/reembolsar-pagamento';
+import { PrepareRefundService, SubmitRefundService, ConfirmRefundService, RefundEvidenceMismatchError } from '../../application/reembolsar-pagamento';
 describe('comando de reembolso', () => {
   const tx = { $executeRaw: jest.fn(), $queryRaw: jest.fn() };
   const db = { $transaction: jest.fn(async (fn: (x: typeof tx) => Promise<void>) => fn(tx)), $queryRaw: jest.fn(), inbox: { findUnique: jest.fn(), updateMany: jest.fn() } };
@@ -31,10 +31,17 @@ describe('comando de reembolso', () => {
     expect(submit.execute).toHaveBeenCalledTimes(1);
   });
   it('mantém pendente uma falha anterior ao envio e nunca chama o provedor', async () => {
-    prepare.execute.mockRejectedValue(new Error('evidência divergente ou banco indisponível'));
+    prepare.execute.mockRejectedValue(new Error('banco indisponível'));
     expect(await processor.processOne()).toBe('PENDING');
     expect(submit.execute).not.toHaveBeenCalled();
     expect(confirm.execute).not.toHaveBeenCalled();
     expect(db.inbox.updateMany).not.toHaveBeenCalled();
+  });
+  it('registra evidência autenticada divergente para reconciliação sem chamar o provedor', async () => {
+    prepare.execute.mockRejectedValue(new RefundEvidenceMismatchError());
+    expect(await processor.processOne()).toBe('RECONCILIACAO_NECESSARIA');
+    expect(db.inbox.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ status: 'PENDING' }), data: expect.objectContaining({ status: 'RECONCILIACAO_NECESSARIA' }) }));
+    expect(submit.execute).not.toHaveBeenCalled();
+    expect(confirm.execute).not.toHaveBeenCalled();
   });
 });
