@@ -15,7 +15,12 @@ paths:
       security: [{ cliente: [] }]
       parameters: [{ $ref: '#/components/parameters/Id' }]
       responses:
-        '200': { description: Orçamento e snapshot de itens }
+        '200':
+          description: Orçamento e snapshot de itens
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Quote' }
+        '400': { description: Identificador inválido }
         '401': { description: JWT inválido }
         '403': { description: Orçamento pertence a outro cliente }
         '404': { description: Orçamento inexistente }
@@ -27,7 +32,7 @@ paths:
       parameters: [{ $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody: { $ref: '#/components/requestBodies/Decision' }
       responses:
-        '200': { description: Decisão registrada ou repetição idempotente }
+        '200': { $ref: '#/components/responses/Decision' }
         '400': { description: Requisição inválida }
         '401': { description: JWT inválido }
         '403': { description: Orçamento pertence a outro cliente }
@@ -41,7 +46,7 @@ paths:
       parameters: [{ $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' }]
       requestBody: { $ref: '#/components/requestBodies/Decision' }
       responses:
-        '200': { description: Decisão registrada ou repetição idempotente }
+        '200': { $ref: '#/components/responses/Decision' }
         '400': { description: Requisição inválida }
         '401': { description: JWT inválido }
         '403': { description: Orçamento pertence a outro cliente }
@@ -98,8 +103,38 @@ components:
   securitySchemes:
     cliente: { type: http, scheme: bearer, bearerFormat: JWT }
   parameters:
-    Id: { name: id, in: path, required: true, schema: { type: string } }
-    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string, maxLength: 128 } }
+    Id: { name: id, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, description: Chave não vazia; reutilizá-la com outra decisão gera conflito., schema: { type: string, minLength: 1, maxLength: 128 } }
+  schemas:
+    Quote:
+      type: object
+      required: [id, osId, version, status, totalInCents, currency, expiresAt, items]
+      properties:
+        id: { type: string }
+        osId: { type: string }
+        version: { type: integer, minimum: 1 }
+        status: { type: string, enum: [ISSUED, APPROVED, REJECTED, EXPIRED, CANCELLED] }
+        totalInCents: { type: integer, minimum: 0 }
+        currency: { type: string, example: BRL }
+        expiresAt: { type: string, format: date-time }
+        items:
+          type: array
+          items:
+            type: object
+            required: [sourceId, itemType, description, quantity, unitPriceInCents]
+            properties:
+              sourceId: { type: string }
+              itemType: { type: string, enum: [PART, SERVICE] }
+              description: { type: string }
+              quantity: { type: integer, minimum: 1 }
+              unitPriceInCents: { type: integer, minimum: 0 }
+    DecisionResult:
+      type: object
+      required: [quoteId, version, decision]
+      properties:
+        quoteId: { type: string }
+        version: { type: integer, minimum: 1 }
+        decision: { type: string, enum: [APPROVED, REJECTED] }
   requestBodies:
     Decision:
       required: true
@@ -107,6 +142,11 @@ components:
         application/json:
           schema: { type: object, additionalProperties: false, required: [versao], properties: { versao: { type: integer, minimum: 1 } } }
   responses:
+    Decision:
+      description: Decisão registrada ou repetição idempotente
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/DecisionResult' }
     Charge:
       description: Cobrança própria; qrData só aparece para cobrança criada e não expirada.
       content:
