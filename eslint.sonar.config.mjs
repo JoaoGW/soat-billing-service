@@ -16,6 +16,8 @@ export default [{
     'sonarjs/unverified-certificate': 'error',
     'sonarjs/weak-ssl': 'error',
     'sonarjs/no-weak-cipher': 'error',
+    'sonarjs/hashing': 'error',
+    'sonarjs/encryption-secure-mode': 'error',
     'sonarjs/insecure-jwt-token': 'error',
     'sonarjs/no-hardcoded-secrets': 'error',
     'sonarjs/no-hardcoded-passwords': 'error',
