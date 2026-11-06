@@ -4,6 +4,11 @@ import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import request from 'supertest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
+import { parse } from 'yaml';
 import { QuoteDecisionService } from '../../src/application/decidir-orcamento';
 import { QuoteQueryService } from '../../src/application/consultar-orcamento';
 import { GenerateQuoteService } from '../../src/application/gerar-orcamento';
@@ -27,6 +32,11 @@ describe('decisão HTTP com PostgreSQL', () => {
   let previousIssuer: string | undefined;
   let previousAudience: string | undefined;
   const token = (subject: string) => jwt.sign({ role: 'cliente' }, secret, { subject, issuer: 'soat-auth-function', audience: 'soat-api', expiresIn: '15m' });
+  const openapi = parse(readFileSync(resolve(process.cwd(), 'docs/openapi.yaml'), 'utf8')) as { components: { schemas: Record<string, object> } };
+  const ajv = addFormats(new Ajv({ allErrors: true }));
+  ajv.addKeyword('example');
+  const validateQuote = ajv.compile(openapi.components.schemas.Quote);
+  const validateDecision = ajv.compile(openapi.components.schemas.DecisionResult);
 
   beforeAll(async () => {
     previous = process.env.JWT_CLIENT_SECRET;
@@ -54,9 +64,11 @@ describe('decisão HTTP com PostgreSQL', () => {
     await request(app.getHttpServer()).get(`/orcamentos/${quoteId}`).set('Authorization', `Bearer ${token('outro')}`).expect(403);
     const snapshot = await request(app.getHttpServer()).get(`/orcamentos/${quoteId}`).set('Authorization', `Bearer ${token(clientId)}`).expect(200);
     expect(snapshot.body).toMatchObject({ id: quoteId, totalInCents: 1000, currency: 'BRL' });
+    expect(validateQuote(snapshot.body)).toBe(true);
     expect(snapshot.body).not.toHaveProperty('clientId');
     await request(app.getHttpServer()).post(endpoint).set('Authorization', `Bearer ${token('outro')}`).set('Idempotency-Key', 'key-1').send({ versao: 1 }).expect(403);
-    await request(app.getHttpServer()).post(endpoint).set('Authorization', `Bearer ${token(clientId)}`).set('Idempotency-Key', 'key-1').send({ versao: 1 }).expect(200);
+    const approved = await request(app.getHttpServer()).post(endpoint).set('Authorization', `Bearer ${token(clientId)}`).set('Idempotency-Key', 'key-1').send({ versao: 1 }).expect(200);
+    expect(validateDecision(approved.body)).toBe(true);
     await request(app.getHttpServer()).post(endpoint).set('Authorization', `Bearer ${token(clientId)}`).set('Idempotency-Key', 'key-1').send({ versao: 1 }).expect(200);
     await request(app.getHttpServer()).post(`/orcamentos/${quoteId}/recusar`).set('Authorization', `Bearer ${token(clientId)}`).set('Idempotency-Key', 'key-2').send({ versao: 1 }).expect(409);
     expect(await prisma.quoteDecision.count({ where: { quoteId } })).toBe(1);

@@ -20,7 +20,7 @@ describe('reembolso em PostgreSQL com provedor simulado', () => {
   afterAll(async () => { await db.$disconnect(); });
   async function setup() {
     const tag = randomUUID(); const orderId = `ORD${randomUUID().replaceAll('-', '').slice(0, 26)}`; const providerRefundId = `REF${randomUUID().replaceAll('-', '').slice(0, 26)}`; const providerPaymentId = String(randomInt(100000000000, 999999999999));
-    const input = { correlationId: 'correlation1', messageId: `msg-${tag}`, operationId: `op-${tag}`, refundId: `refund-${tag}`, paymentId: `payment-${tag}`, osId: `os-${tag}`, sagaId: `saga-${tag}`, filialId: 'branch', cancelOperationId: `cancel-${tag}`, cancelEventId: `event-${tag}`, reason: 'SAGA_COMPENSATION' };
+    const input = { correlationId: 'correlation1', messageId: `msg-${tag}-0`, operationId: `op-${tag}`, refundId: `refund-${tag}`, paymentId: `payment-${tag}`, osId: `os-${tag}`, sagaId: `saga-${tag}`, filialId: 'branch', cancelOperationId: `cancel-${tag}`, cancelEventId: `event-${tag}`, reason: 'SAGA_COMPENSATION' };
     const quoteId = `q-${tag}`; const chargeId = `charge-${tag}`;
     await db.inbox.create({ data: { consumer: 'billing.compensation-evidence', messageId: input.cancelEventId, operationId: input.cancelOperationId, type: 'execution.work-cancelled.v1', status: 'APPLIED', payload: { messageId: input.cancelEventId, type: 'execution.work-cancelled.v1', producer: 'soat-execution-service', operationId: input.cancelOperationId, osId: input.osId, sagaId: input.sagaId, filialId: input.filialId, data: { outcome: 'CANCELLED' } } } });
     await db.quote.create({ data: { id: quoteId, osId: input.osId, sagaId: input.sagaId, filialId: input.filialId, clientId: 'client', version: 1, totalInCents: 5001, status: 'APPROVED', expiresAt: new Date('2035-01-01') } });
@@ -29,6 +29,10 @@ describe('reembolso em PostgreSQL com provedor simulado', () => {
     const order = { id: orderId, type: 'qr', external_reference: chargeId, currency: 'BRL', total_amount: '50.01', status: 'processed', status_detail: 'accredited', transactions: { payments: [{ id: `transaction-${tag}`, reference_id: providerPaymentId, status: 'processed', status_detail: 'accredited', paid_amount: '50.01' }] } };
     const response = { id: orderId, transactions: { refunds: [{ id: providerRefundId, transaction_id: `transaction-${tag}`, status: 'processing' }] } };
     return { input, order, response, orderId, providerRefundId };
+  }
+  // Isola a mensagem desta fixture sem apagar comandos de outras execuções.
+  function positionBefore(processor: RefundCommandProcessor, messageId: string) {
+    (processor as unknown as { cursor: string }).cursor = messageId.slice(0, -1);
   }
   it('percorre mais de um lote de reembolsos incertos no PostgreSQL', async () => {
     const x = await setup();
@@ -106,6 +110,7 @@ describe('reembolso em PostgreSQL com provedor simulado', () => {
     const refundedOrder = { ...x.order, status: 'refunded', transactions: { payments: [{ ...x.order.transactions.payments[0], status: 'refunded', refunded_amount: '50.01' }], refunds: [{ id: x.providerRefundId, transaction_id: x.order.transactions.payments[0].id, status: 'processed', amount: '50.01' }] } };
     const provider = { get: jest.fn().mockResolvedValueOnce(x.order).mockResolvedValue(refundedOrder), refund: jest.fn().mockResolvedValue(x.response) };
     const processor = new RefundCommandProcessor(db, prepare, new SubmitRefundService(db, provider), new ConfirmRefundService(db, provider), validate);
+    positionBefore(processor, body.messageId);
     for (let i = 0; i < 100; i++) { await processor.processOne(); if ((await db.refund.findUnique({ where: { operationId: x.input.operationId } }))?.status === 'REFUNDED') break; }
     expect((await db.refund.findUniqueOrThrow({ where: { operationId: x.input.operationId } })).status).toBe('REFUNDED');
     expect(provider.refund).toHaveBeenCalledTimes(1);
@@ -126,6 +131,7 @@ describe('reembolso em PostgreSQL com provedor simulado', () => {
     expect(receiver.completeMessage).toHaveBeenCalledTimes(1);
     const provider = { get: jest.fn(), refund: jest.fn() };
     const processor = new RefundCommandProcessor(db, prepare, new SubmitRefundService(db, provider), new ConfirmRefundService(db, provider), validate);
+    positionBefore(processor, body.messageId);
     await db.$executeRawUnsafe("CREATE FUNCTION test_block_refund_incident() RETURNS trigger AS $$ BEGIN IF NEW.type = 'billing.refund-blocked.v1' THEN RAISE EXCEPTION 'outbox indisponível'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
     await db.$executeRawUnsafe('CREATE TRIGGER test_block_refund_incident BEFORE INSERT ON "Outbox" FOR EACH ROW EXECUTE FUNCTION test_block_refund_incident()');
     try {
@@ -135,6 +141,7 @@ describe('reembolso em PostgreSQL com provedor simulado', () => {
       await db.$executeRawUnsafe('DROP TRIGGER test_block_refund_incident ON "Outbox"');
       await db.$executeRawUnsafe('DROP FUNCTION test_block_refund_incident()');
     }
+    positionBefore(processor, body.messageId);
     expect(await processor.processOne()).toBe('RECONCILIACAO_NECESSARIA');
     expect((await db.inbox.findUniqueOrThrow({ where: { consumer_messageId: { consumer: 'billing.refund-staging', messageId: body.messageId } } })).status).toBe('RECONCILIACAO_NECESSARIA');
     expect(await db.refund.count({ where: { paymentId: x.input.paymentId } })).toBe(0);
@@ -155,6 +162,7 @@ describe('reembolso em PostgreSQL com provedor simulado', () => {
     const refundedOrder = { ...x.order, status: 'refunded', transactions: { payments: [{ ...x.order.transactions.payments[0], status: 'refunded', refunded_amount: '50.01' }], refunds: [{ id: x.providerRefundId, transaction_id: x.order.transactions.payments[0].id, status: 'processed', amount: '50.01' }] } };
     const provider = { get: jest.fn().mockResolvedValueOnce(x.order).mockResolvedValue(refundedOrder), refund: jest.fn().mockRejectedValue(new Error('resposta perdida')) };
     const processor = new RefundCommandProcessor(db, prepare, new SubmitRefundService(db, provider), new ConfirmRefundService(db, provider), validate);
+    positionBefore(processor, body.messageId);
     expect(await processor.processOne()).toBe('RECONCILIACAO_NECESSARIA');
     const incidents = await db.outbox.findMany({ where: { type: 'billing.refund-blocked.v1', payload: { path: ['sagaId'], equals: x.input.sagaId } } });
     expect(incidents).toHaveLength(1);
