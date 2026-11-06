@@ -18,6 +18,10 @@ import { PrepareRefundService, SubmitRefundService, ConfirmRefundService } from 
 import { ReconcileRefundService } from '../../application/reconciliar-reembolso';
 import { withMessageTrace } from '../observability/message-trace';
 
+export function findRefundsToReconcile(db: PrismaClient, older: Date, cursor: string): Promise<Array<{ operationId: string }>> {
+  return db.$queryRaw<Array<{ operationId: string }>>`SELECT r."operationId" FROM "Refund" r WHERE r."updatedAt" <= ${older} AND r."operationId" > ${cursor} AND (r."status" IN ('IN_FLIGHT','RECONCILIACAO_NECESSARIA','PENDING_CONFIRMATION') OR (r."status"='REFUNDED' AND EXISTS (SELECT 1 FROM "Inbox" i WHERE i."consumer"='billing.refund-staging' AND i."operationId"=r."operationId" AND i."status" IN ('PENDING','RECONCILIACAO_NECESSARIA')))) ORDER BY r."operationId" LIMIT 20`;
+}
+
 @Injectable()
 export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(BillingMessageWorker.name);
@@ -32,6 +36,7 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
   private refundProcessor?: RefundCommandProcessor;
   private refundReconciler?: ReconcileRefundService;
   private nextRefundReconciliation = 0;
+  private refundReconciliationCursor = '';
   private timer?: NodeJS.Timeout;
   private active?: Promise<void>;
   private stopping = false;
@@ -114,22 +119,27 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
   private async poll(): Promise<void> {
     if (this.stopping || !this.dispatcher) return;
     try {
-      await this.dispatcher.dispatchOne();
-      if (await this.refundProcessor?.processOne() === 'RECONCILIACAO_NECESSARIA')
-        this.logger.warn('Reembolso requer reconciliação; consulte a inbox de Billing');
+      try { await this.dispatcher.dispatchOne(); }
+      catch { this.logger.error('Falha ao publicar outbox; mensagem permanece pendente'); }
+      try {
+        if (await this.refundProcessor?.processOne() === 'RECONCILIACAO_NECESSARIA')
+          this.logger.warn('Reembolso requer reconciliação; consulte a inbox de Billing');
+      } catch { this.logger.error('Falha ao processar reembolso; comando permanece pendente'); }
       if (this.refundReconciler && this.prisma && Date.now() >= this.nextRefundReconciliation) {
         this.nextRefundReconciliation = Date.now() + 60000;
         const older = new Date(Date.now() - 60000);
-        const rows = await this.prisma.$queryRaw<Array<{ operationId: string }>>`SELECT r."operationId" FROM "Refund" r WHERE r."updatedAt" <= ${older} AND (r."status" IN ('IN_FLIGHT','RECONCILIACAO_NECESSARIA','PENDING_CONFIRMATION') OR (r."status"='REFUNDED' AND EXISTS (SELECT 1 FROM "Inbox" i WHERE i."consumer"='billing.refund-staging' AND i."operationId"=r."operationId" AND i."status" IN ('PENDING','RECONCILIACAO_NECESSARIA')))) ORDER BY random() LIMIT 20`;
+        const rows = await findRefundsToReconcile(this.prisma, older, this.refundReconciliationCursor);
         for (const row of rows) {
+          this.refundReconciliationCursor = row.operationId;
           try {
             if (await this.refundReconciler.execute(row.operationId) === 'REFUNDED')
               await this.prisma.inbox.updateMany({ where: { consumer: 'billing.refund-staging', operationId: row.operationId, status: { in: ['PENDING', 'RECONCILIACAO_NECESSARIA'] } }, data: { status: 'REFUNDED', appliedAt: new Date() } });
           } catch { this.logger.warn('Falha ao reconciliar reembolso; operação permanece pendente'); }
         }
+        if (rows.length < 20) this.refundReconciliationCursor = '';
       }
     }
-    catch { this.logger.error('Falha ao processar outbox'); }
+    catch { this.logger.error('Falha ao consultar reembolsos para reconciliação'); }
     if (!this.stopping) this.timer = setTimeout(() => { this.active = this.poll(); }, 1000);
   }
 

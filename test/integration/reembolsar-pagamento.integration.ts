@@ -8,6 +8,7 @@ import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 import { PrepareRefundService, SubmitRefundService, ConfirmRefundService } from '../../src/application/reembolsar-pagamento';
 import { ReconcileRefundService } from '../../src/application/reconciliar-reembolso';
+import { findRefundsToReconcile } from '../../src/infrastructure/service-bus/worker';
 
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error('DATABASE_URL de teste é obrigatória');
@@ -29,6 +30,19 @@ describe('reembolso em PostgreSQL com provedor simulado', () => {
     const response = { id: orderId, transactions: { refunds: [{ id: providerRefundId, transaction_id: `transaction-${tag}`, status: 'processing' }] } };
     return { input, order, response, orderId, providerRefundId };
   }
+  it('percorre mais de um lote de reembolsos incertos no PostgreSQL', async () => {
+    const x = await setup();
+    const prefix = `zz-test-${randomUUID()}-`;
+    const older = new Date('2020-01-01T00:00:00Z');
+    const operations = Array.from({ length: 21 }, (_, i) => `${prefix}${String(i).padStart(2, '0')}`);
+    await db.refund.createMany({ data: operations.map((operationId) => ({ id: operationId, operationId, paymentId: x.input.paymentId, status: 'RECONCILIACAO_NECESSARIA', amountInCents: 5001, updatedAt: older })) });
+    try {
+      const first = await findRefundsToReconcile(db, new Date(), prefix);
+      expect(first.map(row => row.operationId)).toEqual(operations.slice(0, 20));
+      const second = await findRefundsToReconcile(db, new Date(), first[19].operationId);
+      expect(second[0].operationId).toBe(operations[20]);
+    } finally { await db.refund.deleteMany({ where: { operationId: { in: operations } } }); }
+  });
   it('serializa intenção, usa chave única e não repete pedido em voo', async () => {
     const x = await setup(); const results = await Promise.all(Array.from({ length: 4 }, () => prepare.execute(x.input)));
     expect(new Set(results.map((item) => item.providerKey)).size).toBe(1);

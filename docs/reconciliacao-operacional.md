@@ -47,10 +47,12 @@ operações físicas conflitantes. A retomada é auditada; dados incompletos ou
 conflitantes permanecem em reconciliação. `EVIDENCE_MISMATCH` não é resolvido
 automaticamente por uma confirmação financeira.
 
-O worker examina até 20 operações por ciclo, em ordem aleatória; falha em uma
-delas não interrompe as demais. Casos sem comprovação continuam pendentes para
-ciclos posteriores. Isso não garante prazo de atendimento para uma fila grande:
-acompanhe a idade e o volume dos incidentes.
+O worker examina até 20 operações por ciclo, percorrendo os identificadores em
+ordem e retomando no lote seguinte. Falha em uma operação, na outbox ou no
+processamento de um comando não impede a tentativa das outras. Casos sem
+comprovação continuam pendentes. O cursor fica em memória e reinicia com o
+processo; não há garantia de prazo, especialmente em reinícios frequentes ou
+filas em crescimento. Acompanhe a idade e o volume dos incidentes.
 
 Os reconciliadores existentes não cobrem automaticamente toda a matriz de
 incidentes; casos sem comprovação continuam pendentes para análise. Valide

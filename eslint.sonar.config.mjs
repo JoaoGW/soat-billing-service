@@ -22,5 +22,12 @@ export default [{
     'sonarjs/no-invalid-regexp': 'error',
     'sonarjs/no-control-regex': 'error',
     'sonarjs/no-regex-spaces': 'error',
+    'sonarjs/no-fallthrough': 'error',
+    'sonarjs/no-empty-character-class': 'error',
+    'sonarjs/operation-returning-nan': 'error',
+    'sonarjs/empty-string-repetition': 'error',
+    'sonarjs/no-empty-after-reluctant': 'error',
+    'sonarjs/no-empty-alternatives': 'error',
+    'sonarjs/no-empty-group': 'error',
   },
 }];

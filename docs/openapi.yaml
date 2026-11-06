@@ -29,7 +29,7 @@ paths:
     post:
       summary: Aprovar versão do orçamento próprio
       security: [{ cliente: [] }]
-      parameters: [{ $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      parameters: [{ $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/CorrelationId' }]
       requestBody: { $ref: '#/components/requestBodies/Decision' }
       responses:
         '200': { $ref: '#/components/responses/Decision' }
@@ -43,7 +43,7 @@ paths:
     post:
       summary: Recusar versão do orçamento próprio
       security: [{ cliente: [] }]
-      parameters: [{ $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' }]
+      parameters: [{ $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/CorrelationId' }]
       requestBody: { $ref: '#/components/requestBodies/Decision' }
       responses:
         '200': { $ref: '#/components/responses/Decision' }
@@ -57,7 +57,7 @@ paths:
     get:
       summary: Consultar cobrança própria
       security: [{ cliente: [] }]
-      parameters: [{ $ref: '#/components/parameters/Id' }]
+      parameters: [{ $ref: '#/components/parameters/ChargeId' }]
       responses:
         '200': { $ref: '#/components/responses/Charge' }
         '400': { description: Identificador inválido }
@@ -69,7 +69,7 @@ paths:
       summary: Consultar cobrança mais recente de uma OS própria
       security: [{ cliente: [] }]
       parameters:
-        - { name: osId, in: path, required: true, schema: { type: string } }
+        - { name: osId, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 128, pattern: '^[a-zA-Z0-9_-]+$' } }
       responses:
         '200': { $ref: '#/components/responses/Charge' }
         '400': { description: Identificador inválido }
@@ -79,6 +79,7 @@ paths:
   /webhooks/mercado-pago:
     post:
       summary: Receber notificação assinada de order
+      description: Disponível somente quando a recepção, o processador e o segredo do webhook estão configurados. A notificação é persistida antes da consulta canônica ao provedor.
       parameters:
         - { name: x-signature, in: header, required: true, schema: { type: string } }
         - { name: x-request-id, in: header, required: true, schema: { type: string } }
@@ -104,7 +105,9 @@ components:
     cliente: { type: http, scheme: bearer, bearerFormat: JWT }
   parameters:
     Id: { name: id, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+    ChargeId: { name: id, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 128, pattern: '^[a-zA-Z0-9_-]+$' } }
     IdempotencyKey: { name: Idempotency-Key, in: header, required: true, description: Chave não vazia; reutilizá-la com outra decisão gera conflito., schema: { type: string, minLength: 1, maxLength: 128 } }
+    CorrelationId: { name: X-Correlation-Id, in: header, required: false, description: Correlação opcional; se estiver vazia ou exceder 128 caracteres será gerado um novo identificador., schema: { type: string } }
   schemas:
     Quote:
       type: object
