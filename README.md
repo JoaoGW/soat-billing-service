@@ -7,6 +7,8 @@ inbox e outbox. O OS coordena uma **Saga orquestrada**: após aprovação e
 reserva confirmada, solicita a cobrança; em compensação, Billing exige prova
 autenticada de que o reparo não começou antes de reembolsar. Transações locais
 são atômicas, enquanto resultados financeiros incertos ficam em reconciliação.
+A orquestração no OS concentra prazos, decisões e a ordem das compensações,
+facilitando auditoria e retomada sem compartilhar o banco financeiro.
 
 ```mermaid
 flowchart LR
