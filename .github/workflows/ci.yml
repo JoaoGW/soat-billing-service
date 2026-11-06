@@ -57,13 +57,18 @@ jobs:
       - run: npm ci
       - run: npm run db:generate
       - run: npm run db:migrate:deploy
+      - run: npm run build
       - run: npm run test:integration
       - name: Validar imagens de runtime e migração
         run: |
           docker build --target runtime -t billing-runtime-ci:${{ github.sha }} .
           docker build --target migration -t billing-migration-ci:${{ github.sha }} .
-          docker run --rm --network host -e DATABASE_URL --entrypoint node billing-runtime-ci:${{ github.sha }} -e 'const {PrismaClient}=require("@prisma/client");for(const m of ["@azure/identity","@azure/service-bus","@opentelemetry/sdk-node","nodemailer"])require(m);for(const m of ["prisma","@prisma/config","deepmerge-ts"]){try{require.resolve(m);throw Error(m+" presente no runtime")}catch(e){if(e.code!=="MODULE_NOT_FOUND")throw e}}const p=new PrismaClient();p.quote.count().then(n=>console.log("PostgreSQL acessível:",n)).catch(e=>{console.error(e.message);process.exitCode=1}).finally(()=>p.$disconnect())'
+          docker run --rm --network host -e DATABASE_URL --entrypoint node billing-runtime-ci:${{ github.sha }} -e 'const {PrismaClient}=require("@prisma/client");for(const m of ["@azure/identity","@azure/service-bus","@opentelemetry/sdk-node","nodemailer"])require(m);for(const m of ["prisma","@prisma/config","deepmerge-ts"]){try{require.resolve(m);throw Error(m+" presente no runtime")}catch(e){if(e.code!=="MODULE_NOT_FOUND")throw e}}const p=new PrismaClient();Promise.all([p.quote.count(),p.billingRecoveryAudit.count()]).then(()=>console.log("PostgreSQL e auditoria acessíveis")).catch(e=>{console.error(e.message);process.exitCode=1}).finally(()=>p.$disconnect())'
           docker run --rm --network host -e DATABASE_URL --entrypoint ./node_modules/.bin/prisma billing-migration-ci:${{ github.sha }} migrate status --schema prisma/schema.prisma
+          if output="$(docker run --rm --entrypoint node billing-runtime-ci:${{ github.sha }} scripts/operations/recover-outbox.cjs 2>&1)"; then
+            echo 'Recuperação não deveria executar sem habilitação'; exit 1
+          fi
+          [[ "$output" == *'Recuperação recusada ou indisponível'* ]] || { echo 'Ferramenta ausente ou inválida'; exit 1; }
           docker run -d --network host --name billing-runtime-ci -e DATABASE_URL billing-runtime-ci:${{ github.sha }}
           trap 'docker rm -f billing-runtime-ci >/dev/null' EXIT
           curl -fsS --retry 20 --retry-delay 1 --retry-all-errors http://127.0.0.1:3000/health

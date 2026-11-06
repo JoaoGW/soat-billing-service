@@ -21,6 +21,7 @@
     "test:cov": "jest --runInBand --coverage",
     "test:coverage-infrastructure": "jest --config jest.infrastructure.config.cjs --runInBand",
     "test:observability-local": "node scripts/integration/observability-local.cjs",
+    "ops:recover-outbox": "node scripts/operations/recover-outbox.cjs",
     "start:prod": "node dist/main.js",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
     "db:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma"

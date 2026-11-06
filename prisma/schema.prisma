@@ -177,6 +177,18 @@ model Outbox {
   @@index([status, nextAttemptAt])
 }
 
+model BillingRecoveryAudit {
+  id          String   @id
+  messageId   String
+  eventType   String
+  actor       String
+  reasonCode  String
+  payloadHash String
+  occurredAt  DateTime @default(now())
+
+  @@index([messageId, occurredAt])
+}
+
 model IdempotencyRequest {
   actorId     String
   route       String

@@ -14,6 +14,33 @@ autorizadas; Billing não acessa seus bancos.
 | Reparo iniciado ou situação física incerta | Preservar reserva e estado financeiro; abrir incidente e consultar a equipe operacional. Não liberar estoque, nem iniciar estorno por timeout. |
 | Mensagem na DLQ | Conferir produtor, assinatura, schema, IDs e estado atual. Corrigir a causa e reenviar apenas pelo procedimento específico do consumidor, preservando IDs; não editar payloads. |
 
+## Publicação de evento esgotada
+
+Depois de restaurar o broker, um operador com acesso autorizado ao banco de
+Billing pode recuperar um evento `FAILED` com `npm run ops:recover-outbox`.
+Primeiro confira o evento, o estado de OS e Execution, as chaves de assinatura
+e a causa da falha. A publicação anterior pode ter chegado ao destinatário;
+confirme a capacidade de deduplicação pelo `messageId` original. Não altere
+payload nem IDs para forçar o processamento.
+
+Execute a versão compilada correspondente aos contratos implantados, com
+`ENABLE_BILLING_OUTBOX_RECOVERY=true`, `BILLING_RECOVERY_MESSAGE_ID`,
+`BILLING_RECOVERY_ACTOR` e `BILLING_RECOVERY_REASON`. O motivo é um código em
+letras maiúsculas, números ou `_`, como `BROKER_RESTORED`. A ferramenta exige
+`DATABASE_URL` e a migration `20261106000000_billing_recovery_audit` aplicada.
+O ator é informado pelo ambiente, não autenticado pela ferramenta: restrinja a
+execução e a credencial de banco à identidade operacional apropriada e associe
+o ator aos registros de acesso da plataforma.
+
+O comando aceita somente eventos Billing conhecidos, ainda em `FAILED`, sem
+claim e sem marca de publicação, cujo envelope e schema atual sejam válidos.
+Ele registra ator, motivo, identificador, tipo e hash do payload na tabela
+`BillingRecoveryAudit` e rearma a mesma mensagem na mesma transação. Um segundo
+rearme concorrente ou posterior é recusado. O resultado não prova a entrega:
+acompanhe a outbox, os consumidores e a deduplicação. O procedimento não altera
+eventos `SENT`, comandos, cobranças, pagamentos ou reembolsos, nem resolve
+automaticamente divergências de estados físicos ou financeiros.
+
 Para localizar comandos em reconciliação, inclusive os que não criaram uma
 intenção financeira, uma identidade autorizada de leitura pode consultar:
 

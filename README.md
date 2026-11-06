@@ -55,8 +55,8 @@ e registra falhas após cinco tentativas. O adapter Service Bus e o worker usam
 identidade de workload e permanecem desativados por padrão. O caminho local foi
 testado com o emulador Service Bus. Falhas definitivas de prazo e orçamento existente
 geram evento transacional antes do ACK; outros cenários de falha ainda precisam
-ser definidos. Faltam o spike com Service Bus real e reprocessamento operacional
-das falhas antes de habilitar o worker.
+ser definidos. O rearme auditado de eventos da outbox está descrito no
+procedimento operacional; o Service Bus real ainda precisa de validação.
 O worker SMTP também é desativado por padrão e exige TLS; ele usa ID de
 mensagem estável, mas uma falha após aceitação pelo servidor pode provocar
 reenvio. Não há garantia de deduplicação na caixa de entrada. Notificações de
@@ -151,7 +151,8 @@ Os testes distribuídos usam broker emulado e provedor simulado; o fluxo ainda
 precisa ser validado com o broker e o provedor reais.
 
 O [procedimento de reconciliação](docs/reconciliacao-operacional.md) descreve
-ações seguras para resultados incertos. Permanecem pendentes validação real do
+ações seguras para resultados incertos e recuperação auditada de eventos da
+outbox com tentativas esgotadas. Permanecem pendentes validação real do
 SMTP, Service Bus, Orders API, webhook e deploy, além de casos não cobertos por
 reconciliação automática e análise mais ampla que as regras SonarJS locais.
 
