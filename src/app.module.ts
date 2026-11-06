@@ -10,6 +10,7 @@ import { MercadoPagoWebhookController } from './interfaces/mercado-pago-webhook-
 import { MercadoPagoWebhookWorker } from './infrastructure/mercado-pago/webhook-worker';
 import { ChargeQueryService } from './application/consultar-cobranca';
 import { CobrancaController } from './interfaces/cobranca-controller';
+import { ObservabilityShutdown } from './infrastructure/observability/shutdown';
 
 @Controller()
 export class HealthController {
@@ -21,6 +22,6 @@ export class HealthController {
 
 @Module({
   controllers: [HealthController, OrcamentoController, CobrancaController, MercadoPagoWebhookController],
-  providers: [MercadoPagoWebhookWorker, BillingMessageWorker, BillingNotificationWorker, BillingDatabase, ClienteGuard, { provide: QuoteDecisionService, useFactory: (database: BillingDatabase) => new QuoteDecisionService(database), inject: [BillingDatabase] }, { provide: QuoteQueryService, useFactory: (database: BillingDatabase) => new QuoteQueryService(database), inject: [BillingDatabase] }, { provide: ChargeQueryService, useFactory: (database: BillingDatabase) => new ChargeQueryService(database), inject: [BillingDatabase] }],
+  providers: [ObservabilityShutdown, MercadoPagoWebhookWorker, BillingMessageWorker, BillingNotificationWorker, BillingDatabase, ClienteGuard, { provide: QuoteDecisionService, useFactory: (database: BillingDatabase) => new QuoteDecisionService(database), inject: [BillingDatabase] }, { provide: QuoteQueryService, useFactory: (database: BillingDatabase) => new QuoteQueryService(database), inject: [BillingDatabase] }, { provide: ChargeQueryService, useFactory: (database: BillingDatabase) => new ChargeQueryService(database), inject: [BillingDatabase] }],
 })
 export class AppModule {}

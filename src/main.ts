@@ -1,3 +1,4 @@
+import './infrastructure/observability/instrumentation';
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';

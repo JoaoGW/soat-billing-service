@@ -31,6 +31,19 @@ reenvio. Não há garantia de deduplicação na caixa de entrada. Notificações
 orçamentos já decididos ou expirados são ignoradas.
 
 Com Node 24: `npm ci`, `npm run lint`, `npm run build`, `npm run test:cov`.
+O [CI de Billing](https://github.com/JoaoGW/soat-billing-service/actions/workflows/ci.yml)
+verifica 80% por métrica no serviço e, separadamente, na infraestrutura com
+`npm run test:coverage-infrastructure`; os relatórios são publicados como
+artefatos identificados pelo SHA da execução. O acesso ao repositório privado
+é necessário para visualizar as evidências.
+
+Traces e métricas OpenTelemetry são opcionais: defina `OBSERVABILITY_ENABLED=true`
+e `NEW_RELIC_LICENSE_KEY` no secret do ambiente; `OTEL_SERVICE_VERSION` deve
+receber o SHA e `OTEL_EXPORTER_OTLP_ENDPOINT` pode apontar ao coletor HTTPS.
+A aplicação inicializa a instrumentação antes do Nest e encerra o SDK no
+shutdown. `npm run build && npm run test:observability-local` verifica a
+exportação para coletor local sem credenciais externas. A validação do trace
+distribuído no New Relic continua dependente do ambiente e da configuração.
 Para gerar o cliente e aplicar migrations ao banco dedicado configurado em
 `DATABASE_URL`, usar `npm run db:generate` e `npm run db:migrate:deploy`.
 Não executar migrations sobre o banco legado.
