@@ -96,6 +96,8 @@ describe('BillingMessageWorker', () => {
     expect(() => new BillingMessageWorker().onModuleInit()).toThrow('Mercado Pago');
     process.env.MERCADO_PAGO_ACCESS_TOKEN = 'test-token';
     expect(() => new BillingMessageWorker().onModuleInit()).toThrow('Evidência');
+    Object.assign(process.env, { ENABLE_BILLING_COMPENSATION_EVIDENCE: 'true', EXECUTION_MESSAGE_PUBLIC_KEY: publicKey, SERVICE_BUS_BILLING_EVIDENCE_SUBSCRIPTION: 'evidence', BILLING_CANCEL_POLL_INTERVAL_MS: '0' });
+    expect(() => new BillingMessageWorker().onModuleInit()).toThrow('Intervalo de cancelamento inválido');
   });
   it('recebe cancelamento assinado e executa processador quando habilitado', async () => {
     Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_MERCADO_PAGO_CANCEL_COMMANDS: 'true', ENABLE_BILLING_COMPENSATION_EVIDENCE: 'true', MERCADO_PAGO_ACCESS_TOKEN: 'test-token', EXECUTION_MESSAGE_PUBLIC_KEY: publicKey, SERVICE_BUS_BILLING_EVIDENCE_SUBSCRIPTION: 'billing-evidence', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });

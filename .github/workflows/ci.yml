@@ -84,7 +84,7 @@ jobs:
             echo 'Recuperação da DLQ não deveria executar sem habilitação'; exit 1
           fi
           [[ "$output" == *'Recuperação recusada ou indisponível'* ]] || { echo 'Ferramenta de DLQ ausente ou inválida'; exit 1; }
-          for recovery in evidence refund charge; do
+          for recovery in evidence refund charge cancel-charge; do
             if output="$(docker run --rm --entrypoint node billing-runtime-ci:${{ github.sha }} "scripts/operations/recover-${recovery}-dlq.cjs" 2>&1)"; then
               echo 'Recuperação da DLQ não deveria executar sem habilitação'; exit 1
             fi

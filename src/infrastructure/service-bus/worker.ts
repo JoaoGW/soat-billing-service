@@ -38,6 +38,7 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
   private refundProcessor?: RefundCommandProcessor;
   private cancelChargeProcessor?: CancelChargeCommandProcessor;
   private nextCancelChargePoll = 0;
+  private cancelChargePollInterval = 60000;
   private refundReconciler?: ReconcileRefundService;
   private nextRefundReconciliation = 0;
   private refundReconciliationCursor = '';
@@ -65,10 +66,13 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
     const chargeEnabled = process.env.ENABLE_MERCADO_PAGO_COMMANDS === 'true';
     const refundEnabled = process.env.ENABLE_MERCADO_PAGO_REFUND_COMMANDS === 'true';
     const cancelEnabled = process.env.ENABLE_MERCADO_PAGO_CANCEL_COMMANDS === 'true';
+    const cancelPollInterval = Number(process.env.BILLING_CANCEL_POLL_INTERVAL_MS ?? '60000');
     const reconcileEnabled = process.env.ENABLE_MERCADO_PAGO_REFUND_RECONCILIATION === 'true';
     const token = process.env.MERCADO_PAGO_ACCESS_TOKEN;
     if ((chargeEnabled || refundEnabled || cancelEnabled) && !token) throw new Error('Configuração incompleta do Mercado Pago');
     if ((refundEnabled || cancelEnabled) && !evidenceEnabled) throw new Error('Evidência de compensação não configurada');
+    if (cancelEnabled && (!Number.isSafeInteger(cancelPollInterval) || cancelPollInterval < 1000 || cancelPollInterval > 3600000)) throw new Error('Intervalo de cancelamento inválido');
+    if (cancelEnabled) this.cancelChargePollInterval = cancelPollInterval;
     if (reconcileEnabled && !refundEnabled) throw new Error('Reembolso não configurado para reconciliação');
     const chargeValidator = chargeEnabled ? createChargeCommandValidator(resolve(process.cwd(), 'docs/contracts/messages')) : undefined;
     this.prisma = new PrismaClient();
@@ -132,7 +136,7 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
       try { await this.dispatcher.dispatchOne(); }
       catch { this.logger.error('Falha ao publicar outbox; mensagem permanece pendente'); }
       if (this.cancelChargeProcessor && Date.now() >= this.nextCancelChargePoll) {
-        this.nextCancelChargePoll = Date.now() + 60000;
+        this.nextCancelChargePoll = Date.now() + this.cancelChargePollInterval;
         try {
           if (await this.cancelChargeProcessor.processOne() === 'RECONCILIACAO_NECESSARIA') this.logger.warn('Cancelamento de cobrança requer reconciliação');
         } catch { this.logger.error('Falha ao processar cancelamento de cobrança'); }

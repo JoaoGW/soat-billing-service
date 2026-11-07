@@ -161,15 +161,28 @@ primeiro no ambiente de teste do Mercado Pago e acompanhe outbox, inbox e DLQ.
 
 O processamento de `billing.cancel-charge.v1` está protegido por
 `ENABLE_MERCADO_PAGO_CANCEL_COMMANDS` e permanece desativado por padrão. Não
-habilite em um ambiente de uso: a emissão do comando e o tratamento do evento
-`billing.charge-canceled.v1` pela Saga do OS ainda precisam ser integrados e
-validados ponta a ponta. A implementação de Billing exige a evidência autenticada
+habilite em um ambiente de uso: embora a emissão do comando e o tratamento do
+evento `billing.charge-canceled.v1` estejam preparados no OS sob a trava
+`ENABLE_SAGA_CHARGE_CANCELLATION`, a ativação em ambiente de uso ainda depende
+de validação operacional. O cenário local usa os três workers Nest e Execution
+com banco e broker emulados e provedor simulado. Billing exige a evidência autenticada
 `execution.work-cancelled.v1`, confere cobrança e reserva, registra a intenção
 antes da chamada, consulta a order e tenta o cancelamento uma única vez. Para
 retomadas, apenas consulta a situação canônica; timeout, dados divergentes ou
 pagamento concorrente permanecem em reconciliação, sem liberar a reserva.
-O polling é de 60 segundos e processa uma operação elegível por ciclo.
+O polling processa uma operação elegível por ciclo e usa 60 segundos por padrão;
+`BILLING_CANCEL_POLL_INTERVAL_MS` aceita valores de 1.000 a 3.600.000 ms.
 A validação real de formatos e estados de resposta continua pendente de contas
 Mercado Pago e ambiente apropriado.
 O ensaio local `npm run test:broker-cancel-charge` usa PostgreSQL e Service Bus
 emulados e exige as respectivas URLs locais de teste; ele não executa a Saga do OS.
+
+Para recuperar especificamente um comando de cancelamento da DLQ, depois de
+investigar o incidente, use `npm run ops:recover-cancel-charge-dlq` com
+`ENABLE_BILLING_CANCEL_CHARGE_DLQ_RECOVERY=true`, `BILLING_DLQ_MESSAGE_ID`,
+`BILLING_DLQ_ACTOR` e `BILLING_DLQ_REASON`, além das credenciais do broker e do
+banco. O comando valida a assinatura e o contrato, audita a tentativa e só dá
+ACK após conferir a inbox; ele não chama o provedor diretamente. Se o worker
+estiver habilitado e a evidência já existir, o processamento normal poderá
+executar o cancelamento financeiro. Uma falha de ACK exige nova inspeção antes
+de outra tentativa. O ensaio usa apenas a DLQ de fila no emulador local.

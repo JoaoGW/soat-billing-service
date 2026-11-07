@@ -25,6 +25,7 @@ COPY --chown=node:node scripts/operations/recover-quote-dlq.cjs ./scripts/operat
 COPY --chown=node:node scripts/operations/recover-evidence-dlq.cjs ./scripts/operations/recover-evidence-dlq.cjs
 COPY --chown=node:node scripts/operations/recover-refund-dlq.cjs ./scripts/operations/recover-refund-dlq.cjs
 COPY --chown=node:node scripts/operations/recover-charge-dlq.cjs ./scripts/operations/recover-charge-dlq.cjs
+COPY --chown=node:node scripts/operations/recover-cancel-charge-dlq.cjs ./scripts/operations/recover-cancel-charge-dlq.cjs
 COPY --chown=node:node package.json ./
 USER node
 EXPOSE 3000
