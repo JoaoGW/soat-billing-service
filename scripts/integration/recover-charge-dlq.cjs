@@ -1,0 +1,66 @@
+/* Apenas recursos locais; a criação prévia usa provedor simulado. */
+const assert = require('node:assert/strict');
+const { generateKeyPairSync, randomUUID } = require('node:crypto');
+const { readFileSync } = require('node:fs');
+const path = require('node:path');
+const Ajv = require('ajv');
+const addFormats = require('ajv-formats').default;
+const { PrismaClient } = require('@prisma/client');
+const { ServiceBusClient } = require('@azure/service-bus');
+const { PrepareChargeService } = require('../../dist/application/preparar-cobranca');
+const { SubmitChargeService } = require('../../dist/application/enviar-cobranca');
+const { createChargeCommandValidator } = require('../../dist/infrastructure/service-bus/charge-consumer');
+const { MessageSigner, MessageVerifier } = require('../../dist/infrastructure/service-bus/message-signature');
+const { RecoverBillingChargeDlq } = require('../../dist/infrastructure/service-bus/recover-charge-dlq');
+const url = process.env.DATABASE_URL, connection = process.env.SERVICE_BUS_TEST_CONNECTION_STRING;
+if (!url || !['localhost', '127.0.0.1', '::1'].includes(new URL(url).hostname) || !new URL(url).pathname.endsWith('_test')) throw Error('Banco local de teste obrigatório');
+if (!connection || !/^Endpoint=sb:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(connection) || !/UseDevelopmentEmulator=true/i.test(connection)) throw Error('Broker local obrigatório');
+const db = new PrismaClient(), bus = new ServiceBusClient(connection), sender = bus.createSender('bdd.billing.commands');
+const queue = bus.createReceiver('bdd.billing.commands', { receiveMode: 'peekLock' });
+const dlq = bus.createReceiver('bdd.billing.commands', { receiveMode: 'peekLock', subQueueType: 'deadLetter' });
+async function main() {
+  const tag = randomUUID(), messageId = `msg-${tag}`, operationId = `op-${tag}`, quoteId = `quote-${tag}`, chargeId = `charge-${tag}`;
+  const osId = `os-${tag}`, sagaId = `saga-${tag}`, clientId = `client-${tag}`, expiresAt = new Date(Date.now() + 900000).toISOString();
+  const body = { messageId, operationId, type: 'billing.create-charge.v1', schemaVersion: 1, occurredAt: new Date().toISOString(), producer: 'soat-os-service', aggregateType: 'saga', aggregateId: sagaId, aggregateVersion: 1, osId, sagaId, filialId: 'branch', correlationId: `corr-${tag}`, causationId: `cause-${tag}`, data: { quoteId, quoteVersion: 1, chargeId, clientId, totalInCents: 500, currency: 'BRL', reservationId: `reservation-${tag}`, externalPosId: 'pos', expiresAt } };
+  await db.quote.create({ data: { id: quoteId, osId, sagaId, filialId: 'branch', clientId, version: 1, totalInCents: 500, currency: 'BRL', status: 'APPROVED', expiresAt: new Date(expiresAt) } });
+  await new PrepareChargeService(db).execute({ ...body, ...body.data });
+  const orderId = `ORD${randomUUID().replaceAll('-', '').slice(0, 26)}`; let calls = 0;
+  const provider = { create: async () => { calls++; return { id: orderId, type: 'qr', external_reference: chargeId, currency: 'BRL', total_amount: '5.00', status: 'created', type_response: { qr_data: 'fixture' } }; } };
+  assert.equal(await new SubmitChargeService(db, provider).execute(operationId), 'CREATED');
+  const keys = generateKeyPairSync('ed25519');
+  const signer = new MessageSigner(keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString());
+  const verifier = new MessageVerifier(keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), 'soat-os-service');
+  const directory = path.resolve('docs/contracts/messages'), ajv = addFormats(new Ajv({ allErrors: true }));
+  ajv.addSchema(JSON.parse(readFileSync(path.join(directory, 'envelope.schema.json'), 'utf8')));
+  const validators = new Map(['billing.charge-created.v1', 'billing.charge-failed.v1'].map(type => [type, ajv.compile(JSON.parse(readFileSync(path.join(directory, `${type}.schema.json`), 'utf8')))]));
+  const service = new RecoverBillingChargeDlq(db, verifier, createChargeCommandValidator(directory), (type, event) => validators.get(type)?.(event) === true);
+  const input = { messageId, actor: 'operator', reasonCode: 'BROKER_RESTORED' };
+  const synthetic = { body, messageId, subject: body.type, applicationProperties: { signature: signer.sign(body) } };
+  await db.chargeAttempt.update({ where: { operationId }, data: { status: 'IN_FLIGHT' } });
+  let completed = false;
+  await assert.rejects(() => service.execute(synthetic, { completeMessage: async () => { completed = true; } }, input), /não comprovado/);
+  assert.equal(completed, false); assert.equal(calls, 1);
+  await db.chargeAttempt.update({ where: { operationId }, data: { status: 'CREATED' } });
+  await sender.sendMessages(synthetic);
+  const selected = await queue.receiveMessages(1, { maxWaitTimeInMs: 15000 });
+  assert.equal(selected.length, 1); if (selected[0].messageId !== messageId) { await queue.abandonMessage(selected[0]); throw Error('Fila não isolada'); }
+  await queue.deadLetterMessage(selected[0], { deadLetterReason: 'TestRecovery' });
+  const messages = await dlq.receiveMessages(1, { maxWaitTimeInMs: 15000 });
+  assert.equal(messages.length, 1); if (messages[0].messageId !== messageId) { await dlq.abandonMessage(messages[0]); throw Error('DLQ não isolada'); }
+  await assert.rejects(() => service.execute(messages[0], { completeMessage: async () => { throw Error('ACK incerto simulado'); } }, input), /ACK incerto/);
+  assert.equal(await service.execute(messages[0], dlq, input), 'VERIFIED');
+  assert.equal(await db.billingRecoveryAudit.count({ where: { messageId } }), 2); assert.equal(calls, 1);
+  assert.equal(await db.charge.count({ where: { id: chargeId } }), 1);
+  await db.outbox.deleteMany({ where: { payload: { path: ['operationId'], equals: operationId } } });
+  const expiredTag = randomUUID(), expiredId = `msg-${expiredTag}`, expiredOp = `op-${expiredTag}`, expiredQuote = `quote-${expiredTag}`, expiredCharge = `charge-${expiredTag}`, expiredOs = `os-${expiredTag}`, expiredSaga = `saga-${expiredTag}`, expiredClient = `client-${expiredTag}`, expiredAt = new Date(Date.now() - 60000).toISOString();
+  const expired = { ...body, messageId: expiredId, operationId: expiredOp, osId: expiredOs, sagaId: expiredSaga, aggregateId: expiredSaga, data: { ...body.data, quoteId: expiredQuote, chargeId: expiredCharge, clientId: expiredClient, expiresAt: expiredAt } };
+  await db.quote.create({ data: { id: expiredQuote, osId: expiredOs, sagaId: expiredSaga, filialId: 'branch', clientId: expiredClient, version: 1, totalInCents: 500, currency: 'BRL', status: 'APPROVED', expiresAt: new Date(expiredAt) } });
+  await new PrepareChargeService(db).execute({ ...expired, ...expired.data });
+  assert.equal(await new SubmitChargeService(db, provider).execute(expiredOp), 'EXPIRED');
+  const expiredMessage = { body: expired, messageId: expiredId, subject: expired.type, applicationProperties: { signature: signer.sign(expired) } };
+  assert.equal(await service.execute(expiredMessage, { completeMessage: async () => undefined }, { ...input, messageId: expiredId }), 'VERIFIED');
+  assert.equal(calls, 1);
+  await db.outbox.deleteMany({ where: { payload: { path: ['operationId'], equals: expiredOp } } });
+  process.stdout.write('Cobrança comprovada recuperada sem nova chamada; estado incerto recusado.\n');
+}
+main().finally(async () => { await dlq.close(); await queue.close(); await sender.close(); await bus.close(); await db.$disconnect(); }).catch(error => { console.error(error.stack); process.exitCode = 1; });

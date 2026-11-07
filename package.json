@@ -23,7 +23,13 @@
     "test:observability-local": "node scripts/integration/observability-local.cjs",
     "ops:recover-outbox": "node scripts/operations/recover-outbox.cjs",
     "ops:recover-quote-dlq": "node scripts/operations/recover-quote-dlq.cjs",
+    "ops:recover-evidence-dlq": "node scripts/operations/recover-evidence-dlq.cjs",
+    "ops:recover-refund-dlq": "node scripts/operations/recover-refund-dlq.cjs",
+    "ops:recover-charge-dlq": "node scripts/operations/recover-charge-dlq.cjs",
     "test:broker-quote-dlq": "node scripts/integration/recover-quote-dlq.cjs",
+    "test:broker-evidence-dlq": "node scripts/integration/recover-evidence-dlq.cjs",
+    "test:broker-refund-dlq": "node scripts/integration/recover-refund-dlq.cjs",
+    "test:broker-charge-dlq": "node scripts/integration/recover-charge-dlq.cjs",
     "start:prod": "node dist/main.js",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
     "db:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma"

@@ -7,6 +7,10 @@ export interface PrepareCharge {
   reservationId: string; externalPosId: string; expiresAt: string; traceparent?: string; tracestate?: string;
 }
 
+export function chargeFingerprint(input: PrepareCharge): string {
+  return createHash('sha256').update(JSON.stringify({ operationId: input.operationId, chargeId: input.chargeId, quoteId: input.quoteId, quoteVersion: input.quoteVersion, osId: input.osId, sagaId: input.sagaId, filialId: input.filialId, clientId: input.clientId, totalInCents: input.totalInCents, currency: input.currency, reservationId: input.reservationId, externalPosId: input.externalPosId, expiresAt: new Date(input.expiresAt).toISOString() })).digest('hex');
+}
+
 /** Persists an intent only. A separately claimed operation must call the provider. */
 export class PrepareChargeService {
   constructor(private readonly db: PrismaClient) {}
@@ -16,7 +20,7 @@ export class PrepareChargeService {
         !Number.isSafeInteger(input.quoteVersion) || input.quoteVersion < 1 || !Number.isSafeInteger(input.totalInCents) || input.totalInCents < 1 || input.currency !== 'BRL' || !Number.isFinite(now.getTime()) ||
         !Number.isFinite(Date.parse(input.expiresAt))) throw new Error('Dados da cobrança inválidos');
     const expiresAt = new Date(input.expiresAt);
-    const fingerprint = createHash('sha256').update(JSON.stringify({ operationId: input.operationId, chargeId: input.chargeId, quoteId: input.quoteId, quoteVersion: input.quoteVersion, osId: input.osId, sagaId: input.sagaId, filialId: input.filialId, clientId: input.clientId, totalInCents: input.totalInCents, currency: input.currency, reservationId: input.reservationId, externalPosId: input.externalPosId, expiresAt: expiresAt.toISOString() })).digest('hex');
+    const fingerprint = chargeFingerprint(input);
     for (let attempt = 0; ; attempt++) {
       try {
         return await this.db.$transaction(async (tx) => {

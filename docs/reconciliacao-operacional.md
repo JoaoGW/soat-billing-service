@@ -60,11 +60,54 @@ auditoria: uma nova entrega do mesmo comando passa pela deduplicação e pode
 registrar outra tentativa, sem gerar outro orçamento. O ator é informado pelo
 ambiente e deve ser correlacionado aos registros de acesso da plataforma.
 
-Esta ferramenta não recupera comandos de cobrança ou reembolso nem evidências
-da subscription: mantenha-os na DLQ até haver procedimento específico seguro.
+Esta ferramenta recupera somente orçamento; para cobrança use o procedimento
+específico abaixo.
 Ela foi testada na DLQ de uma fila emulada, não no Service Bus real. Em um
 ensaio, o emulador retornou erro de lock após o commit; não há evidência de
 que esse erro explique a intermitência histórica do teste de reembolso.
+
+## Evidência e comando de reembolso na DLQ
+
+Antes de qualquer recuperação, confira a Saga, o pagamento, a reserva, o estado
+físico e a evidência de cancelamento com OS e Execution. A recuperação registra
+o documento usando o consumidor normal; se o worker de reembolso estiver ativo
+e encontrar comando e evidência compatíveis, ele poderá iniciar o fluxo de
+reembolso. Suspenda esse worker antes da operação caso seja necessária análise
+adicional. Não altere payloads ou identificadores para forçar uma compensação.
+
+Para uma evidência `execution.work-cancelled.v1` na DLQ da subscription, use
+`npm run ops:recover-evidence-dlq` e `ENABLE_BILLING_EVIDENCE_DLQ_RECOVERY=true`,
+com `EXECUTION_MESSAGE_PUBLIC_KEY`, `SERVICE_BUS_EVENT_TOPIC` e
+`SERVICE_BUS_BILLING_EVIDENCE_SUBSCRIPTION`. Para um comando
+`billing.refund-payment.v1` na DLQ da fila, use `npm run ops:recover-refund-dlq`
+e `ENABLE_BILLING_REFUND_DLQ_RECOVERY=true`, com `OS_MESSAGE_PUBLIC_KEY` e
+`SERVICE_BUS_COMMAND_QUEUE`. Ambos exigem as variáveis comuns de banco,
+namespace, identidade de workload e `BILLING_DLQ_MESSAGE_ID`,
+`BILLING_DLQ_ACTOR` e `BILLING_DLQ_REASON` descritas acima.
+
+Cada ferramenta verifica assinatura, produtor, schema, assunto e ID, registra a
+tentativa de auditoria e confirma a DLQ apenas após comprovar o registro exato
+na inbox. Uma falha de ACK pode exigir nova tentativa e outra auditoria; a
+inbox deduplica o conteúdo. Nenhuma delas chama o provedor diretamente. Os
+ensaios usam DLQ de fila e banco locais; a DLQ da subscription, identidade e
+permissões reais ainda precisam ser validadas no ambiente de aceite.
+
+## Cobrança já comprovada na DLQ
+
+`npm run ops:recover-charge-dlq` confirma apenas um comando de cobrança cujo
+resultado já esteja registrado como `CREATED` ou `EXPIRED`. Configure
+`ENABLE_BILLING_CHARGE_DLQ_RECOVERY=true`, `OS_MESSAGE_PUBLIC_KEY`,
+`SERVICE_BUS_COMMAND_QUEUE` e as variáveis comuns de banco, namespace,
+identidade, ID, ator e motivo descritas acima. A ferramenta recebe somente a
+primeira mensagem e exige coincidência exata do ID, assinatura e contrato.
+
+Ela confere fingerprint, inbox, tentativa, dados da cobrança e um único evento
+correspondente na outbox. A verificação e a auditoria são transacionais; após
+o commit, o comando é confirmado sem chamar o provedor. Se o evento estiver
+`FAILED`, avalie seu rearme pelo procedimento próprio da outbox. Estados
+`INTENT_RECORDED`, `IN_FLIGHT`, `RECONCILIACAO_NECESSARIA`, dados divergentes
+ou evidência ausente permanecem na DLQ para análise: a ferramenta não presume
+sucesso nem cria cobrança. A DLQ e as permissões reais ainda exigem validação.
 
 Para localizar comandos em reconciliação, inclusive os que não criaram uma
 intenção financeira, uma identidade autorizada de leitura pode consultar:

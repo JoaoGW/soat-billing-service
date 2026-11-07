@@ -22,6 +22,9 @@ COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node docs/contracts/messages ./docs/contracts/messages
 COPY --chown=node:node scripts/operations/recover-outbox.cjs ./scripts/operations/recover-outbox.cjs
 COPY --chown=node:node scripts/operations/recover-quote-dlq.cjs ./scripts/operations/recover-quote-dlq.cjs
+COPY --chown=node:node scripts/operations/recover-evidence-dlq.cjs ./scripts/operations/recover-evidence-dlq.cjs
+COPY --chown=node:node scripts/operations/recover-refund-dlq.cjs ./scripts/operations/recover-refund-dlq.cjs
+COPY --chown=node:node scripts/operations/recover-charge-dlq.cjs ./scripts/operations/recover-charge-dlq.cjs
 COPY --chown=node:node package.json ./
 USER node
 EXPOSE 3000

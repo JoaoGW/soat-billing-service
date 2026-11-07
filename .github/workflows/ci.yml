@@ -73,6 +73,12 @@ jobs:
             echo 'Recuperação da DLQ não deveria executar sem habilitação'; exit 1
           fi
           [[ "$output" == *'Recuperação recusada ou indisponível'* ]] || { echo 'Ferramenta de DLQ ausente ou inválida'; exit 1; }
+          for recovery in evidence refund charge; do
+            if output="$(docker run --rm --entrypoint node billing-runtime-ci:${{ github.sha }} "scripts/operations/recover-${recovery}-dlq.cjs" 2>&1)"; then
+              echo 'Recuperação da DLQ não deveria executar sem habilitação'; exit 1
+            fi
+            [[ "$output" == *'Recuperação recusada ou indisponível'* ]] || { echo 'Ferramenta de DLQ ausente ou inválida'; exit 1; }
+          done
           docker run -d --network host --name billing-runtime-ci -e DATABASE_URL billing-runtime-ci:${{ github.sha }}
           trap 'docker rm -f billing-runtime-ci >/dev/null' EXIT
           curl -fsS --retry 20 --retry-delay 1 --retry-all-errors http://127.0.0.1:3000/health
