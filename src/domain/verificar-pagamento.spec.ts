@@ -1,4 +1,26 @@
-import { verifyCanonicalPayment, verifyProviderPayment, verifyCanonicalRefund } from './verificar-pagamento';
+import { verifyCanonicalPayment, verifyProviderPayment, verifyCanonicalRefund, verifyCanonicalCancellation, verifyCanonicalCancelable } from './verificar-pagamento';
+
+describe('cancelamento financeiro canônico', () => {
+  const expected = { orderId: 'order', externalReference: 'ref', amountInCents: 5001, currency: 'BRL' as const };
+  const payment = { id: 'pay', status: 'canceled', status_detail: 'canceled_by_api', paid_amount: '0.00' };
+  const order = { id: 'order', type: 'qr', external_reference: 'ref', currency: 'BRL', total_amount: '50.01', status: 'canceled', status_detail: 'canceled', transactions: { payments: [payment] } };
+  it('confirma apenas order e transação canceladas sem valor pago', () => {
+    expect(verifyCanonicalCancellation(order, expected)).toBe(true);
+    const withoutPaidAmount = { id: 'pay', status: 'canceled', status_detail: 'canceled_by_api' };
+    expect(verifyCanonicalCancellation({ ...order, transactions: { payments: [withoutPaidAmount] } }, expected)).toBe(true);
+  });
+  it('recusa identidade, valores, estado ou transações divergentes', () => {
+    for (const bad of [null, { ...order, id: 'other' }, { ...order, external_reference: 'other' }, { ...order, currency: 'USD' }, { ...order, total_amount: '50.02' }, { ...order, status: 'processed' }, { ...order, status_detail: 'unknown' }, { ...order, transactions: {} }, { ...order, transactions: { payments: [] } }, { ...order, transactions: { payments: [payment, payment] } }, { ...order, transactions: { payments: [{ ...payment, status: 'processed' }] } }, { ...order, transactions: { payments: [{ ...payment, paid_amount: '0.01' }] } }, { ...order, transactions: { payments: [payment], refunds: [{}] } }]) expect(verifyCanonicalCancellation(bad, expected)).toBe(false);
+    expect(verifyCanonicalCancellation(order, { ...expected, amountInCents: 0 })).toBe(false);
+  });
+  it('permite tentativa apenas enquanto a order e a transação estão abertas e sem pagamento', () => {
+    const open = { ...order, status: 'created', status_detail: 'created', transactions: { payments: [{ ...payment, status: 'created', status_detail: 'created' }] } };
+    expect(verifyCanonicalCancelable(open, expected)).toBe(true);
+    expect(verifyCanonicalCancelable(order, expected)).toBe(false);
+    expect(verifyCanonicalCancelable({ ...open, transactions: { payments: [{ ...open.transactions.payments[0], paid_amount: '0.01' }] } }, expected)).toBe(false);
+    expect(verifyCanonicalCancelable({ ...open, external_reference: 'other' }, expected)).toBe(false);
+  });
+});
 
 describe('observação canônica de pagamento', () => {
   const expected = { orderId: 'order', externalReference: 'os-1', amountInCents: 5001, currency: 'BRL' as const };

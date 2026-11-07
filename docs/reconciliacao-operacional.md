@@ -156,3 +156,18 @@ prazo em caso de reinícios repetidos.
 Os reconciliadores existentes não cobrem automaticamente toda a matriz de
 incidentes; casos sem comprovação continuam pendentes para análise. Valide
 primeiro no ambiente de teste do Mercado Pago e acompanhe outbox, inbox e DLQ.
+
+### Cancelamento de cobrança em desenvolvimento
+
+O processamento de `billing.cancel-charge.v1` está protegido por
+`ENABLE_MERCADO_PAGO_CANCEL_COMMANDS` e permanece desativado por padrão. Não
+habilite em um ambiente de uso: a emissão do comando e o tratamento do evento
+`billing.charge-canceled.v1` pela Saga do OS ainda precisam ser integrados e
+validados ponta a ponta. A implementação de Billing exige a evidência autenticada
+`execution.work-cancelled.v1`, confere cobrança e reserva, registra a intenção
+antes da chamada, consulta a order e tenta o cancelamento uma única vez. Para
+retomadas, apenas consulta a situação canônica; timeout, dados divergentes ou
+pagamento concorrente permanecem em reconciliação, sem liberar a reserva.
+O polling é de 60 segundos e processa uma operação elegível por ciclo.
+A validação real de formatos e estados de resposta continua pendente de contas
+Mercado Pago e ambiente apropriado.

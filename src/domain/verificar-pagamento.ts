@@ -17,6 +17,38 @@ function cents(value: unknown): number | null {
   return amount <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(amount) : null;
 }
 
+/** Evidence must come from a fresh authenticated provider query, never a webhook. */
+export function verifyCanonicalCancellation(order: unknown, expected: ExpectedPayment): boolean {
+  if (!order || typeof order !== 'object' || Array.isArray(order) || !Number.isSafeInteger(expected.amountInCents) || expected.amountInCents <= 0) return false;
+  const value = order as Record<string, unknown>;
+  if (value.id !== expected.orderId || value.type !== 'qr' || value.external_reference !== expected.externalReference ||
+      value.currency !== expected.currency || cents(value.total_amount) !== expected.amountInCents ||
+      value.status !== 'canceled' || value.status_detail !== 'canceled') return false;
+  const tx = value.transactions;
+  if (!tx || typeof tx !== 'object' || !('payments' in tx) || !Array.isArray(tx.payments) || tx.payments.length !== 1) return false;
+  const payment: unknown = tx.payments[0];
+  if (!payment || typeof payment !== 'object' || Array.isArray(payment) || !('id' in payment) || typeof payment.id !== 'string' || !payment.id ||
+      !('status' in payment) || payment.status !== 'canceled' || !('status_detail' in payment) || payment.status_detail !== 'canceled_by_api') return false;
+  if ('paid_amount' in payment && cents(payment.paid_amount) !== 0) return false;
+  if ('refunds' in tx && (!Array.isArray(tx.refunds) || tx.refunds.length !== 0)) return false;
+  return true;
+}
+
+/** Only an unpaid order in the provider's initial state is eligible for cancellation. */
+export function verifyCanonicalCancelable(order: unknown, expected: ExpectedPayment): boolean {
+  if (!order || typeof order !== 'object' || Array.isArray(order) || !Number.isSafeInteger(expected.amountInCents) || expected.amountInCents <= 0) return false;
+  const value = order as Record<string, unknown>;
+  if (value.id !== expected.orderId || value.type !== 'qr' || value.external_reference !== expected.externalReference ||
+      value.currency !== expected.currency || cents(value.total_amount) !== expected.amountInCents || value.status !== 'created') return false;
+  const tx = value.transactions;
+  if (!tx || typeof tx !== 'object' || !('payments' in tx) || !Array.isArray(tx.payments) || tx.payments.length !== 1) return false;
+  const payment: unknown = tx.payments[0];
+  if (!payment || typeof payment !== 'object' || Array.isArray(payment) || !('id' in payment) || typeof payment.id !== 'string' || !payment.id || !('status' in payment) || payment.status !== 'created') return false;
+  if ('paid_amount' in payment && cents(payment.paid_amount) !== 0) return false;
+  if ('refunds' in tx && (!Array.isArray(tx.refunds) || tx.refunds.length !== 0)) return false;
+  return true;
+}
+
 /** Input must come from an authenticated provider query, not a webhook body. */
 export function verifyCanonicalPayment(order: unknown, expected: ExpectedPayment): PaymentObservation {
   if (!order || typeof order !== 'object' || Array.isArray(order) || !Number.isSafeInteger(expected.amountInCents) || expected.amountInCents <= 0) return { kind: 'RECONCILE' };

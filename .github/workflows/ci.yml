@@ -59,6 +59,17 @@ jobs:
       - run: npm run db:migrate:deploy
       - run: npm run build
       - run: npm run test:integration
+      - name: Cobertura de integração do cancelamento de cobrança
+        run: >-
+          npm run test:integration -- cancelar-cobranca.integration.ts --coverage
+          --collectCoverageFrom=src/application/cancelar-cobranca.ts
+          --coverageDirectory=coverage/cancel-charge-integration
+          --coverageThreshold='{"global":{"statements":80,"branches":80,"functions":80,"lines":80}}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: billing-cancel-charge-integration-${{ github.sha }}
+          path: coverage/cancel-charge-integration/
+          if-no-files-found: error
       - name: Validar imagens de runtime e migração
         run: |
           docker build --target runtime -t billing-runtime-ci:${{ github.sha }} .

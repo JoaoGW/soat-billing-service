@@ -8,6 +8,7 @@ import { OutboxDispatcher } from '../../application/publicar-outbox';
 import { BillingMessageWorker } from './worker';
 import { RefundCommandProcessor } from './refund-command';
 import { ReconcileRefundService } from '../../application/reconciliar-reembolso';
+import { CancelChargeCommandProcessor } from './cancel-charge-command';
 
 jest.mock('@azure/identity');
 jest.mock('@azure/service-bus');
@@ -30,7 +31,7 @@ describe('BillingMessageWorker', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env = { ...originalEnv, ENABLE_SERVICE_BUS_WORKER: 'false', ENABLE_MERCADO_PAGO_COMMANDS: 'false', ENABLE_MERCADO_PAGO_REFUND_RECONCILIATION: 'false', ENABLE_MERCADO_PAGO_REFUND_COMMANDS: 'false', ENABLE_BILLING_COMPENSATION_EVIDENCE: 'false', BILLING_MESSAGE_PRIVATE_KEY: privateKey, OS_MESSAGE_PUBLIC_KEY: publicKey };
+    process.env = { ...originalEnv, ENABLE_SERVICE_BUS_WORKER: 'false', ENABLE_MERCADO_PAGO_COMMANDS: 'false', ENABLE_MERCADO_PAGO_CANCEL_COMMANDS: 'false', ENABLE_MERCADO_PAGO_REFUND_RECONCILIATION: 'false', ENABLE_MERCADO_PAGO_REFUND_COMMANDS: 'false', ENABLE_BILLING_COMPENSATION_EVIDENCE: 'false', BILLING_MESSAGE_PRIVATE_KEY: privateKey, OS_MESSAGE_PUBLIC_KEY: publicKey };
     delete process.env.MERCADO_PAGO_ACCESS_TOKEN;
     receiver.subscribe.mockReturnValue({ close: closeSubscription });
     client.createSender.mockReturnValue(sender);
@@ -89,6 +90,23 @@ describe('BillingMessageWorker', () => {
   it('exige token somente quando cobrança é explicitamente habilitada', () => {
     Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_MERCADO_PAGO_COMMANDS: 'true', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
     expect(() => new BillingMessageWorker().onModuleInit()).toThrow('Mercado Pago');
+  });
+  it('exige credenciais e evidência para habilitar cancelamento', () => {
+    Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_MERCADO_PAGO_CANCEL_COMMANDS: 'true', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
+    expect(() => new BillingMessageWorker().onModuleInit()).toThrow('Mercado Pago');
+    process.env.MERCADO_PAGO_ACCESS_TOKEN = 'test-token';
+    expect(() => new BillingMessageWorker().onModuleInit()).toThrow('Evidência');
+  });
+  it('recebe cancelamento assinado e executa processador quando habilitado', async () => {
+    Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_MERCADO_PAGO_CANCEL_COMMANDS: 'true', ENABLE_BILLING_COMPENSATION_EVIDENCE: 'true', MERCADO_PAGO_ACCESS_TOKEN: 'test-token', EXECUTION_MESSAGE_PUBLIC_KEY: publicKey, SERVICE_BUS_BILLING_EVIDENCE_SUBSCRIPTION: 'billing-evidence', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
+    const processOne = jest.spyOn(CancelChargeCommandProcessor.prototype, 'processOne').mockResolvedValue('EMPTY');
+    const worker = new BillingMessageWorker(); worker.onModuleInit(); await new Promise<void>(resolve => setImmediate(resolve));
+    expect(processOne).toHaveBeenCalled();
+    const handlers = receiver.subscribe.mock.calls[1][0] as { processMessage(message: unknown): Promise<void> };
+    const body = { type: 'billing.cancel-charge.v1', producer: 'soat-os-service' };
+    await handlers.processMessage({ ...signed(body), subject: body.type });
+    expect(receiver.deadLetterMessage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ deadLetterReason: 'InvalidContract' }));
+    await worker.onApplicationShutdown(); processOne.mockRestore();
   });
   it('descarta eventos alheios à evidência sem preencher a DLQ e rejeita cancelamentos não autenticados', async () => {
     Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_BILLING_COMPENSATION_EVIDENCE: 'true', EXECUTION_MESSAGE_PUBLIC_KEY: publicKey, SERVICE_BUS_BILLING_EVIDENCE_SUBSCRIPTION: 'billing-evidence', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
