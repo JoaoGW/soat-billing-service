@@ -32,7 +32,8 @@
     "test:broker-charge-dlq": "node scripts/integration/recover-charge-dlq.cjs",
     "start:prod": "node dist/main.js",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
-    "db:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma"
+    "db:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
+    "test:broker-cancel-charge": "node scripts/integration/cancel-charge-broker.cjs"
   },
   "dependencies": {
     "@azure/identity": "4.14.1",

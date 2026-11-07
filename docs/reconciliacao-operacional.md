@@ -171,3 +171,5 @@ pagamento concorrente permanecem em reconciliação, sem liberar a reserva.
 O polling é de 60 segundos e processa uma operação elegível por ciclo.
 A validação real de formatos e estados de resposta continua pendente de contas
 Mercado Pago e ambiente apropriado.
+O ensaio local `npm run test:broker-cancel-charge` usa PostgreSQL e Service Bus
+emulados e exige as respectivas URLs locais de teste; ele não executa a Saga do OS.
