@@ -41,6 +41,31 @@ acompanhe a outbox, os consumidores e a deduplicação. O procedimento não alte
 eventos `SENT`, comandos, cobranças, pagamentos ou reembolsos, nem resolve
 automaticamente divergências de estados físicos ou financeiros.
 
+## Comando de orçamento na DLQ
+
+Após corrigir a causa, `npm run ops:recover-quote-dlq` pode tratar um comando
+`billing.generate-quote.v1` autenticado. Configure
+`ENABLE_BILLING_DLQ_RECOVERY=true`, `BILLING_DLQ_MESSAGE_ID`,
+`BILLING_DLQ_ACTOR` e `BILLING_DLQ_REASON` (código em letras maiúsculas,
+números ou `_`), além de `DATABASE_URL`, `OS_MESSAGE_PUBLIC_KEY`,
+`SERVICE_BUS_NAMESPACE`, `SERVICE_BUS_COMMAND_QUEUE` e as variáveis de identidade
+de workload do Azure. A identidade precisa receber da DLQ da fila. A ferramenta
+examina apenas a primeira mensagem; se o ID não corresponder, ela a abandona e
+interrompe. Não modifica mensagens não autenticadas ou incompatíveis.
+
+Cada tentativa validada é registrada em `BillingRecoveryAudit` antes de usar o
+handler normal de orçamento. O ACK acontece somente após verificar inbox e
+operação duráveis. Caso a resposta do ACK seja perdida, confira a inbox e a
+auditoria: uma nova entrega do mesmo comando passa pela deduplicação e pode
+registrar outra tentativa, sem gerar outro orçamento. O ator é informado pelo
+ambiente e deve ser correlacionado aos registros de acesso da plataforma.
+
+Esta ferramenta não recupera comandos de cobrança ou reembolso nem evidências
+da subscription: mantenha-os na DLQ até haver procedimento específico seguro.
+Ela foi testada na DLQ de uma fila emulada, não no Service Bus real. Em um
+ensaio, o emulador retornou erro de lock após o commit; não há evidência de
+que esse erro explique a intermitência histórica do teste de reembolso.
+
 Para localizar comandos em reconciliação, inclusive os que não criaram uma
 intenção financeira, uma identidade autorizada de leitura pode consultar:
 
