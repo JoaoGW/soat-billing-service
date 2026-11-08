@@ -119,4 +119,47 @@ describe('cancelamento de cobrança com PostgreSQL', () => {
     expect(await processor.processOne()).toBe('CANCELED');
     expect(provider.cancel).toHaveBeenCalledTimes(1);
   });
+  it('registra evidência divergente para revisão, com rollback se auditoria falhar', async () => {
+    const x = await setup();
+    await db.inbox.update({ where: { consumer_messageId: { consumer: 'billing.compensation-evidence', messageId: x.input.cancelEventId } }, data: { payload: { messageId: x.input.cancelEventId, type: 'execution.work-cancelled.v1', producer: 'soat-execution-service', operationId: x.input.cancelOperationId, osId: x.input.osId, sagaId: x.input.sagaId, filialId: x.input.filialId, data: { outcome: 'ALREADY_STARTED' } } } });
+    const { chargeId, reservationId, cancelOperationId, cancelEventId, ...header } = x.input;
+    const body = { ...header, type: 'billing.cancel-charge.v1', schemaVersion: 1, occurredAt: new Date().toISOString(), producer: 'soat-os-service', aggregateType: 'saga', aggregateId: x.input.sagaId, aggregateVersion: 1, causationId: 'cause', data: { chargeId, reservationId, cancelOperationId, cancelEventId } };
+    const validate = cancelChargeValidator(resolve(process.cwd(), 'docs/contracts/messages'));
+    const receiver = { completeMessage: jest.fn(), abandonMessage: jest.fn(), deadLetterMessage: jest.fn() };
+    await new CancelChargeCommandConsumer(db, validate).process({ body, messageId: body.messageId } as ServiceBusReceivedMessage, receiver as unknown as ServiceBusReceiver);
+    const provider = { get: jest.fn(), cancel: jest.fn() };
+    const processor = new CancelChargeCommandProcessor(db, new PrepareChargeCancellation(db), new CancelChargeService(db, provider), validate);
+    const position = () => { (processor as unknown as { cursor: string }).cursor = body.messageId.slice(0, -1); };
+    const where = { consumer_messageId: { consumer: 'billing.cancel-charge-staging', messageId: body.messageId } };
+    await db.$executeRawUnsafe("CREATE FUNCTION test_block_cancel_audit() RETURNS trigger AS $$ BEGIN IF NEW.\"reasonCode\" = 'CANCEL_EVIDENCE_MISMATCH' THEN RAISE EXCEPTION 'auditoria indisponível'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+    await db.$executeRawUnsafe('CREATE TRIGGER test_block_cancel_audit BEFORE INSERT ON "BillingRecoveryAudit" FOR EACH ROW EXECUTE FUNCTION test_block_cancel_audit()');
+    try {
+      position(); await expect(processor.processOne()).rejects.toThrow();
+      expect((await db.inbox.findUniqueOrThrow({ where })).status).toBe('PENDING');
+    } finally {
+      await db.$executeRawUnsafe('DROP TRIGGER test_block_cancel_audit ON "BillingRecoveryAudit"');
+      await db.$executeRawUnsafe('DROP FUNCTION test_block_cancel_audit()');
+    }
+    await db.$executeRawUnsafe("CREATE FUNCTION test_block_cancel_notice() RETURNS trigger AS $$ BEGIN IF NEW.type = 'billing.charge-cancel-blocked.v1' THEN RAISE EXCEPTION 'outbox indisponível'; END IF; RETURN NEW; END; $$ LANGUAGE plpgsql");
+    await db.$executeRawUnsafe('CREATE TRIGGER test_block_cancel_notice BEFORE INSERT ON "Outbox" FOR EACH ROW EXECUTE FUNCTION test_block_cancel_notice()');
+    try {
+      position(); await expect(processor.processOne()).rejects.toThrow();
+      expect((await db.inbox.findUniqueOrThrow({ where })).status).toBe('PENDING');
+      expect(await db.billingRecoveryAudit.count({ where: { messageId: body.messageId } })).toBe(0);
+    } finally {
+      await db.$executeRawUnsafe('DROP TRIGGER test_block_cancel_notice ON "Outbox"');
+      await db.$executeRawUnsafe('DROP FUNCTION test_block_cancel_notice()');
+    }
+    position(); expect(await processor.processOne()).toBe('RECONCILIACAO_NECESSARIA');
+    expect((await db.inbox.findUniqueOrThrow({ where })).status).toBe('RECONCILIACAO_NECESSARIA');
+    expect(await db.billingRecoveryAudit.count({ where: { messageId: body.messageId, reasonCode: 'CANCEL_EVIDENCE_MISMATCH' } })).toBe(1);
+    const blocked = await db.outbox.findMany({ where: { type: 'billing.charge-cancel-blocked.v1', payload: { path: ['sagaId'], equals: x.input.sagaId } } });
+    expect(blocked).toHaveLength(1);
+    const dir = resolve(process.cwd(), 'docs/contracts/messages'), ajv = addFormats(new Ajv());
+    ajv.addSchema(JSON.parse(readFileSync(resolve(dir, 'envelope.schema.json'), 'utf8')));
+    expect(ajv.validate(JSON.parse(readFileSync(resolve(dir, 'billing.charge-cancel-blocked.v1.schema.json'), 'utf8')), blocked[0].payload)).toBe(true);
+    expect((await db.charge.findUniqueOrThrow({ where: { id: chargeId } })).status).toBe('CREATED');
+    position(); expect(await processor.processOne()).toBe('EMPTY');
+    expect(provider.get).not.toHaveBeenCalled(); expect(provider.cancel).not.toHaveBeenCalled();
+  });
 });

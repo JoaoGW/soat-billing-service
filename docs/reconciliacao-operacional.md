@@ -186,3 +186,18 @@ ACK após conferir a inbox; ele não chama o provedor diretamente. Se o worker
 estiver habilitado e a evidência já existir, o processamento normal poderá
 executar o cancelamento financeiro. Uma falha de ACK exige nova inspeção antes
 de outra tentativa. O ensaio usa apenas a DLQ de fila no emulador local.
+
+Se a avaliação do cancelamento encontrar evidência, cobrança, reserva ou
+operação divergente, Billing mantém o comando em `RECONCILIACAO_NECESSARIA` e
+registra uma linha em `BillingRecoveryAudit` com ator `billing-worker` e motivo
+`CANCEL_EVIDENCE_MISMATCH`, `CANCEL_CHARGE_MISMATCH` ou
+`CANCEL_OPERATION_MISMATCH`. A marcação e a auditoria são transacionais; uma
+falha ao gravar a auditoria mantém o comando pendente para nova tentativa.
+Na mesma transação, Billing registra o evento assinado
+`billing.charge-cancel-blocked.v1` na outbox para comunicar o motivo ao OS;
+uma falha na outbox também impede a confirmação da marcação.
+Divergências anteriores à intenção financeira não são reprocessadas
+continuamente. Consulte a mensagem, o motivo da auditoria, a evidência assinada,
+a cobrança e a reserva no OS e Execution; não invoque o provedor nem libere
+estoque apenas pela ausência de um pagamento. Um procedimento automatizado para
+rearmar esse caso bloqueado ainda não está disponível.

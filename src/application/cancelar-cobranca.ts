@@ -11,6 +11,11 @@ type Intent = CancelChargeInput & { providerKey: string; fingerprint: string };
 type Provider = { get(orderId: string): Promise<Record<string, unknown>>; cancel(orderId: string, key: string): Promise<Record<string, unknown>> };
 const consumer = 'billing.cancel-charge.v1';
 
+/** A persisted, authenticated command cannot be safely applied without review. */
+export class ChargeCancellationBlockedError extends Error {
+  constructor(readonly reasonCode: 'CANCEL_EVIDENCE_MISMATCH' | 'CANCEL_CHARGE_MISMATCH' | 'CANCEL_OPERATION_MISMATCH', message: string) { super(message); }
+}
+
 /** Caller authenticates and validates the OS command; Execution evidence is checked in the transaction. */
 export class PrepareChargeCancellation {
   constructor(private readonly db: PrismaClient) {}
@@ -24,17 +29,17 @@ export class PrepareChargeCancellation {
       const existing = await tx.inbox.findUnique({ where: { consumer_messageId: { consumer, messageId: input.messageId } } });
       if (previous || existing) {
         const old = previous?.result as unknown as Intent | undefined;
-        if (!previous || !existing || previous.payloadHash !== fingerprint || existing.operationId !== input.operationId || old?.messageId !== input.messageId) throw new Error('Operação ou mensagem divergente');
+        if (!previous || !existing || previous.payloadHash !== fingerprint || existing.operationId !== input.operationId || old?.messageId !== input.messageId) throw new ChargeCancellationBlockedError('CANCEL_OPERATION_MISMATCH', 'Operação ou mensagem divergente');
         return;
       }
       const proof = await tx.inbox.findUnique({ where: { consumer_messageId: { consumer: 'billing.compensation-evidence', messageId: input.cancelEventId } } });
       const evidence = proof?.payload as { type?: string; producer?: string; messageId?: string; operationId?: string; osId?: string; sagaId?: string; filialId?: string; data?: { outcome?: string } } | undefined;
-      if (proof?.status !== 'APPLIED' || evidence?.messageId !== input.cancelEventId || evidence.type !== 'execution.work-cancelled.v1' || evidence.producer !== 'soat-execution-service' || evidence.operationId !== input.cancelOperationId || evidence.osId !== input.osId || evidence.sagaId !== input.sagaId || evidence.filialId !== input.filialId || evidence.data?.outcome !== 'CANCELLED') throw new Error('Evidência de cancelamento inválida');
+      if (proof?.status !== 'APPLIED' || evidence?.messageId !== input.cancelEventId || evidence.type !== 'execution.work-cancelled.v1' || evidence.producer !== 'soat-execution-service' || evidence.operationId !== input.cancelOperationId || evidence.osId !== input.osId || evidence.sagaId !== input.sagaId || evidence.filialId !== input.filialId || evidence.data?.outcome !== 'CANCELLED') throw new ChargeCancellationBlockedError('CANCEL_EVIDENCE_MISMATCH', 'Evidência de cancelamento inválida');
       const charge = await tx.charge.findUnique({ where: { id: input.chargeId }, include: { quote: true, payments: true, attempts: true } });
-      if (!charge || charge.osId !== input.osId || charge.quote.sagaId !== input.sagaId || charge.quote.filialId !== input.filialId || charge.status !== 'CREATED' || !charge.providerOrderId || charge.payments.length !== 0 || charge.currency !== 'BRL') throw new Error('Cobrança não permite cancelamento');
+      if (!charge || charge.osId !== input.osId || charge.quote.sagaId !== input.sagaId || charge.quote.filialId !== input.filialId || charge.status !== 'CREATED' || !charge.providerOrderId || charge.payments.length !== 0 || charge.currency !== 'BRL') throw new ChargeCancellationBlockedError('CANCEL_CHARGE_MISMATCH', 'Cobrança não permite cancelamento');
       const attempt = charge.attempts.filter(item => item.status === 'CREATED');
       const context = attempt[0]?.result as { reservationId?: string; sagaId?: string; filialId?: string } | null | undefined;
-      if (attempt.length !== 1 || context?.reservationId !== input.reservationId || context.sagaId !== input.sagaId || context.filialId !== input.filialId) throw new Error('Reserva diverge da cobrança');
+      if (attempt.length !== 1 || context?.reservationId !== input.reservationId || context.sagaId !== input.sagaId || context.filialId !== input.filialId) throw new ChargeCancellationBlockedError('CANCEL_CHARGE_MISMATCH', 'Reserva diverge da cobrança');
       const intent: Intent = { ...input, providerKey: randomUUID(), fingerprint };
       await tx.commandOperation.create({ data: { consumer, operationId: input.operationId, payloadHash: fingerprint, result: intent as unknown as Prisma.InputJsonObject } });
       await tx.inbox.create({ data: { consumer, messageId: input.messageId, operationId: input.operationId, type: consumer, payload: intent as unknown as Prisma.InputJsonObject, status: 'INTENT_RECORDED' } });

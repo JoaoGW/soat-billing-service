@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import Ajv from 'ajv';
 import addFormats from 'ajv-formats';
 import { PrismaClient } from '@prisma/client';
 import { ServiceBusReceivedMessage, ServiceBusReceiver } from '@azure/service-bus';
-import { CancelChargeInput, PrepareChargeCancellation, CancelChargeService } from '../../application/cancelar-cobranca';
+import { CancelChargeInput, PrepareChargeCancellation, CancelChargeService, ChargeCancellationBlockedError } from '../../application/cancelar-cobranca';
 
 type Envelope = Omit<CancelChargeInput, 'chargeId' | 'reservationId' | 'cancelOperationId' | 'cancelEventId'> & { type: string; data: Pick<CancelChargeInput, 'chargeId' | 'reservationId' | 'cancelOperationId' | 'cancelEventId'> };
 type Receiver = Pick<ServiceBusReceiver, 'completeMessage' | 'abandonMessage' | 'deadLetterMessage'>;
@@ -39,7 +40,7 @@ export class CancelChargeCommandProcessor {
   private cursor = '';
   constructor(private readonly db: PrismaClient, private readonly prepare: PrepareChargeCancellation, private readonly cancel: CancelChargeService, private readonly validate: (value: unknown) => boolean) {}
   async processOne(): Promise<'EMPTY' | 'PENDING' | 'CANCELED' | 'RECONCILIACAO_NECESSARIA'> {
-    const find = (cursor: string) => this.db.$queryRaw<Array<{ messageId: string; payload: unknown }>>`SELECT s."messageId", s."payload" FROM "Inbox" s WHERE s."consumer"=${staging} AND s."status" IN ('PENDING','RECONCILIACAO_NECESSARIA') AND s."messageId" > ${cursor} AND EXISTS (SELECT 1 FROM "Inbox" e WHERE e."consumer"='billing.compensation-evidence' AND e."messageId"=s."payload"->'data'->>'cancelEventId' AND e."status"='APPLIED') ORDER BY s."messageId" LIMIT 1`;
+    const find = (cursor: string) => this.db.$queryRaw<Array<{ messageId: string; payload: unknown }>>`SELECT s."messageId", s."payload" FROM "Inbox" s WHERE s."consumer"=${staging} AND (s."status"='PENDING' OR (s."status"='RECONCILIACAO_NECESSARIA' AND EXISTS (SELECT 1 FROM "Inbox" i WHERE i."consumer"='billing.cancel-charge.v1' AND i."messageId"=s."messageId"))) AND s."messageId" > ${cursor} AND EXISTS (SELECT 1 FROM "Inbox" e WHERE e."consumer"='billing.compensation-evidence' AND e."messageId"=s."payload"->'data'->>'cancelEventId' AND e."status"='APPLIED') ORDER BY s."messageId" LIMIT 1`;
     let rows = await find(this.cursor); if (!rows.length && this.cursor) { this.cursor = ''; rows = await find(this.cursor); }
     const row = rows[0]; if (!row) return 'EMPTY'; this.cursor = row.messageId;
     if (!this.validate(row.payload)) throw new Error('Comando persistido inválido');
@@ -51,6 +52,21 @@ export class CancelChargeCommandProcessor {
       const outcome = result === 'IN_FLIGHT' || result === 'RECONCILIACAO_NECESSARIA' ? await this.cancel.reconcile(input.messageId) : result;
       await this.db.inbox.updateMany({ where: { consumer: staging, messageId: input.messageId, status: { in: ['PENDING', 'RECONCILIACAO_NECESSARIA'] } }, data: { status: outcome, ...(outcome === 'CANCELED' ? { appliedAt: new Date() } : {}) } });
       return outcome;
-    } catch { return 'PENDING'; }
+    } catch (error) {
+      if (!(error instanceof ChargeCancellationBlockedError)) return 'PENDING';
+      await this.db.$transaction(async tx => {
+        const changed = await tx.inbox.updateMany({ where: { consumer: staging, messageId: input.messageId, status: 'PENDING' }, data: { status: 'RECONCILIACAO_NECESSARIA', appliedAt: new Date() } });
+        if (!changed.count) return;
+        await tx.billingRecoveryAudit.create({ data: { id: randomUUID(), messageId: input.messageId, eventType: event.type, actor: 'billing-worker', reasonCode: error.reasonCode, payloadHash: createHash('sha256').update(JSON.stringify(event)).digest('hex') } });
+        const messageId = randomUUID(), type = 'billing.charge-cancel-blocked.v1';
+        await tx.outbox.create({ data: { messageId, type, payload: {
+          messageId, type, schemaVersion: 1, occurredAt: new Date().toISOString(), producer: 'soat-billing-service', aggregateType: 'charge-cancellation', aggregateId: input.operationId, aggregateVersion: 1,
+          osId: input.osId, sagaId: input.sagaId, filialId: input.filialId, correlationId: input.correlationId, causationId: input.messageId, operationId: input.operationId,
+          ...(input.traceparent ? { traceparent: input.traceparent } : {}), ...(input.tracestate ? { tracestate: input.tracestate } : {}),
+          data: { chargeId: input.chargeId, reservationId: input.reservationId, cancelOperationId: input.cancelOperationId, cancelEventId: input.cancelEventId, reasonCode: error.reasonCode },
+        } } });
+      });
+      return 'RECONCILIACAO_NECESSARIA';
+    }
   }
 }
