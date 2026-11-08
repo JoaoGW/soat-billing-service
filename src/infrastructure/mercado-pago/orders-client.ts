@@ -3,9 +3,16 @@ import { MERCADO_PAGO_ORDER_ID } from '../../domain/identificadores-mercado-pago
 
 /** A provider response is evidence to reconcile, not confirmation of payment. */
 export class MercadoPagoError extends Error {
-  constructor(readonly kind: 'RECONCILE' | 'REJECTED' | 'UNAVAILABLE', readonly status?: number) {
-    super(`Mercado Pago: ${kind}`);
+  constructor(readonly kind: 'RECONCILE' | 'REJECTED' | 'UNAVAILABLE', readonly status?: number, readonly reason?: string) {
+    super(`Mercado Pago: ${kind}${status ? ` HTTP ${status}` : ''}${reason ? ` ${reason}` : ''}`);
   }
+}
+
+/** Código de rede (ex.: EAI_AGAIN) ou nome do erro do fetch, sem dados da requisição. */
+function networkReason(error: unknown): string | undefined {
+  const code = (error as { cause?: { code?: unknown } } | undefined)?.cause?.code;
+  if (typeof code === 'string') return code;
+  return error instanceof Error ? error.name : undefined;
 }
 
 export interface CreateQrOrder {
@@ -48,7 +55,7 @@ export class MercadoPagoOrdersClient {
     let response: Response;
     try {
       response = await this.http(`${this.baseUrl}/v1/payments/${paymentId}`, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(this.timeoutMs), headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/json' } });
-    } catch { throw new MercadoPagoError('UNAVAILABLE'); }
+    } catch (error) { throw new MercadoPagoError('UNAVAILABLE', undefined, networkReason(error)); }
     if (!response.ok) throw new MercadoPagoError(response.status >= 500 || response.status === 429 ? 'UNAVAILABLE' : 'REJECTED', response.status);
     let data: unknown;
     try { data = await response.json(); } catch { throw new MercadoPagoError('UNAVAILABLE'); }
@@ -84,8 +91,8 @@ export class MercadoPagoOrdersClient {
         headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/json', ...(key ? { 'X-Idempotency-Key': key } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}),
       });
-    } catch {
-      throw new MercadoPagoError(method === 'POST' ? 'RECONCILE' : 'UNAVAILABLE');
+    } catch (error) {
+      throw new MercadoPagoError(method === 'POST' ? 'RECONCILE' : 'UNAVAILABLE', undefined, networkReason(error));
     }
     if (!response.ok) {
       const uncertain = response.status >= 500 || [408, 409, 425, 429].includes(response.status);

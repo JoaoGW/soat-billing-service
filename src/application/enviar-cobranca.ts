@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { CreateQrOrder } from '../infrastructure/mercado-pago/orders-client';
 import { MERCADO_PAGO_ORDER_ID } from '../domain/identificadores-mercado-pago';
@@ -9,6 +10,7 @@ type Outcome = 'CREATED' | 'IN_FLIGHT' | 'RECONCILIACAO_NECESSARIA' | 'EXPIRED';
 
 /** A committed claim precedes the network call. IN_FLIGHT is never automatically resent. */
 export class SubmitChargeService {
+  private readonly logger = new Logger(SubmitChargeService.name);
   constructor(private readonly db: PrismaClient, private readonly provider: Provider) {}
 
   async execute(operationId: string, now = new Date()): Promise<Outcome> {
@@ -46,7 +48,9 @@ export class SubmitChargeService {
       const total = `${Math.floor(attempt.charge.amountInCents / 100)}.${String(attempt.charge.amountInCents % 100).padStart(2, '0')}`;
       const qr = response.type_response;
       if (typeof response.id !== 'string' || !MERCADO_PAGO_ORDER_ID.test(response.id) || response.type !== 'qr' || response.external_reference !== attempt.charge.externalReference || response.currency !== 'BRL' || response.total_amount !== total || response.status !== 'created' || !qr || typeof qr !== 'object' || !('qr_data' in qr) || typeof qr.qr_data !== 'string' || !qr.qr_data) throw new Error('Resposta inconsistente');
-    } catch {
+    } catch (error) {
+      // O motivo diferencia falha de rede antes do envio de resposta incerta do provedor.
+      this.logger.warn(`Cobrança ${attempt.chargeId} requer reconciliação: ${error instanceof Error ? error.message : 'erro desconhecido'}`);
       await this.db.$transaction(async (tx) => {
         const updated = await tx.chargeAttempt.updateMany({ where: { id: attempt.id, status: 'IN_FLIGHT' }, data: { status: 'RECONCILIACAO_NECESSARIA' } });
         if (updated.count) await tx.charge.update({ where: { id: attempt.chargeId }, data: { status: 'RECONCILIACAO_NECESSARIA' } });

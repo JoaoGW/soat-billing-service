@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { SubmitChargeService } from './enviar-cobranca';
 
@@ -37,10 +38,14 @@ describe('SubmitChargeService', () => {
     expect(tx.outbox.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: 'billing.charge-failed.v1' }) }));
   });
   it('marca reconciliação em timeout ou resposta incompatível', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     provider.create.mockRejectedValueOnce(new Error('timeout')).mockResolvedValueOnce({ id: orderId });
     await expect(service.execute('op', now)).resolves.toBe('RECONCILIACAO_NECESSARIA');
     await expect(service.execute('op', now)).resolves.toBe('RECONCILIACAO_NECESSARIA');
     expect(tx.charge.update).toHaveBeenCalledWith(expect.objectContaining({ data: { status: 'RECONCILIACAO_NECESSARIA' } }));
+    expect(warn).toHaveBeenNthCalledWith(1, 'Cobrança c1 requer reconciliação: timeout');
+    expect(warn).toHaveBeenNthCalledWith(2, 'Cobrança c1 requer reconciliação: Resposta inconsistente');
+    warn.mockRestore();
   });
   it('propaga erro do banco após envio para preservar intenção em voo', async () => {
     db.$transaction.mockImplementationOnce(async (fn: (value: typeof tx) => unknown) => fn(tx)).mockRejectedValueOnce(new Error('database offline'));

@@ -50,8 +50,8 @@ describe('MercadoPagoOrdersClient', () => {
     expect(http).not.toHaveBeenCalled();
   });
   it('marca como incerta qualquer falha de rede ou conflito em mutação', async () => {
-    http.mockRejectedValueOnce(new Error('timeout'));
-    await expect(client.create(input)).rejects.toMatchObject({ kind: 'RECONCILE' });
+    http.mockRejectedValueOnce(new TypeError('fetch failed', { cause: { code: 'EAI_AGAIN' } }));
+    await expect(client.create(input)).rejects.toMatchObject({ kind: 'RECONCILE', reason: 'EAI_AGAIN', message: 'Mercado Pago: RECONCILE EAI_AGAIN' });
     http.mockResolvedValueOnce(new Response('{}', { status: 409 }));
     await expect(client.cancel(id, 'cancel')).rejects.toMatchObject({ kind: 'RECONCILE', status: 409 });
     http.mockResolvedValueOnce(new Response('{}', { status: 400 }));
