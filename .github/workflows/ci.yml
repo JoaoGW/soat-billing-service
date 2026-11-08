@@ -20,6 +20,7 @@ jobs:
       - run: npm run quality:sonarjs
       - run: npm run build
       - run: npm run test:observability-local
+      - run: npm run test:metadata-compat
       - run: npm run test:cov -- --watchman=false
       - run: npm run test:coverage-infrastructure -- --watchman=false
       - name: Publicar resumo de cobertura
