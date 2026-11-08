@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { verifyCanonicalPayment, verifyProviderPayment } from '../domain/verificar-pagamento';
+import { MERCADO_PAGO_ORDER_ID } from '../domain/identificadores-mercado-pago';
 
 type Provider = { get(orderId: string): Promise<Record<string, unknown>>; getPayment(paymentId: string): Promise<Record<string, unknown>> };
 type Context = { messageId: string; correlationId: string; sagaId: string; filialId: string; quoteId: string; quoteVersion: number; clientId: string; reservationId: string; traceparent?: string; tracestate?: string };
@@ -19,7 +20,7 @@ export class ProcessMercadoPagoWebhook {
     if (notification.status !== 'RECEIVED') throw new Error('Estado de notificação inválido');
     const payload = notification.payload as { data?: { id?: unknown } };
     const orderId = payload.data?.id;
-    if (typeof orderId !== 'string' || !/^ORD[a-z0-9]{26}$/i.test(orderId)) return this.markReconciliation(where);
+    if (typeof orderId !== 'string' || !MERCADO_PAGO_ORDER_ID.test(orderId)) return this.markReconciliation(where);
     const charge = await this.db.charge.findUnique({ where: { providerOrderId: orderId }, include: { quote: true, attempts: true } });
     // A notification can arrive before ChargeCreated is committed locally.
     if (!charge) return 'PENDING';

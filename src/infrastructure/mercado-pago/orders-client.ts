@@ -1,4 +1,5 @@
 import { mercadoPagoBaseUrl } from '../local-emulators';
+import { MERCADO_PAGO_ORDER_ID } from '../../domain/identificadores-mercado-pago';
 
 /** A provider response is evidence to reconcile, not confirmation of payment. */
 export class MercadoPagoError extends Error {
@@ -71,7 +72,7 @@ export class MercadoPagoOrdersClient {
   }
 
   private validateOrderId(orderId: string): string {
-    if (typeof orderId !== 'string' || !/^ORD[a-z0-9]{26}$/i.test(orderId)) throw new Error('ID de order inválido');
+    if (typeof orderId !== 'string' || !MERCADO_PAGO_ORDER_ID.test(orderId)) throw new Error('ID de order inválido');
     return `/${orderId}`;
   }
 
@@ -95,7 +96,7 @@ export class MercadoPagoOrdersClient {
     if (!data || typeof data !== 'object' || Array.isArray(data) || !('id' in data) || typeof data.id !== 'string' || !('status' in data) || typeof data.status !== 'string') {
       throw new MercadoPagoError(method === 'POST' ? 'RECONCILE' : 'UNAVAILABLE');
     }
-    if (!/^ORD[a-z0-9]{26}$/i.test(data.id) || (path && data.id !== path.split('/')[1])) {
+    if (!MERCADO_PAGO_ORDER_ID.test(data.id) || (path && data.id !== path.split('/')[1])) {
       throw new MercadoPagoError(method === 'POST' ? 'RECONCILE' : 'UNAVAILABLE');
     }
     return data as Record<string, unknown>;

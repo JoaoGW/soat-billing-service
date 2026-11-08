@@ -34,6 +34,13 @@ describe('MercadoPagoOrdersClient', () => {
     await local.get(id); await local.getPayment('12345');
     expect(http.mock.calls.map(([url]) => url)).toEqual([`http://mercado-pago-simulado:8080/v1/orders/${id}`, 'http://mercado-pago-simulado:8080/v1/payments/12345']);
   });
+  it('aceita os identificadores de order do modo de teste do provedor', async () => {
+    const test = 'ORDTST01M6YMP4CKEEDYRC2KFX2MM8C0';
+    http.mockResolvedValueOnce(new Response(JSON.stringify({ id: test, status: 'created' }), { status: 200 }));
+    await expect(client.get(test)).resolves.toMatchObject({ id: test });
+    expect(http.mock.calls[0][0]).toBe(`https://api.mercadopago.com/v1/orders/${test}`);
+    await expect(client.get('ORDXYZ01M6YMP4CKEEDYRC2KFX2MM8C0')).rejects.toThrow('ID de order inválido');
+  });
   it('não chama o provedor com dados inválidos', async () => {
     await expect(client.create({ ...input, amountInCents: 0 })).rejects.toThrow('inválidos');
     await expect(client.create({ ...input, externalReference: '../' })).rejects.toThrow('inválidos');

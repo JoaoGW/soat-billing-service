@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { verifyCanonicalRefund } from '../domain/verificar-pagamento';
 import { ConfirmRefundService } from './reembolsar-pagamento';
+import { MERCADO_PAGO_REFUND_ID } from '../domain/identificadores-mercado-pago';
 
 /** Consulta somente leitura: nunca repete o pedido de reembolso ao provedor. */
 export class ReconcileRefundService {
@@ -20,7 +21,7 @@ export class ReconcileRefundService {
     const order = await this.provider.get(charge.providerOrderId);
     const transactions = order.transactions;
     if (!transactions || typeof transactions !== 'object' || !('refunds' in transactions) || !Array.isArray(transactions.refunds)) return 'RECONCILIACAO_NECESSARIA';
-    const ids = transactions.refunds.flatMap((item: unknown) => item && typeof item === 'object' && 'id' in item && typeof item.id === 'string' && /^REF[a-z0-9]{26}$/i.test(item.id) ? [item.id] : []);
+    const ids = transactions.refunds.flatMap((item: unknown) => item && typeof item === 'object' && 'id' in item && typeof item.id === 'string' && MERCADO_PAGO_REFUND_ID.test(item.id) ? [item.id] : []);
     const matches = [...new Set(ids)].filter(providerRefundId => verifyCanonicalRefund(order, { orderId: charge.providerOrderId!, externalReference: charge.externalReference, providerPaymentId: refund.payment.providerPaymentId, providerRefundId, amountInCents: refund.amountInCents }));
     if (matches.length !== 1 || (refund.providerRefundId && refund.providerRefundId !== matches[0])) return 'RECONCILIACAO_NECESSARIA';
     const changed = await this.db.refund.updateMany({ where: { id: refund.id, status: refund.status, updatedAt: refund.updatedAt, providerRefundId: refund.providerRefundId }, data: { status: 'PENDING_CONFIRMATION', providerRefundId: matches[0] } });

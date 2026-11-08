@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { CreateQrOrder } from '../infrastructure/mercado-pago/orders-client';
+import { MERCADO_PAGO_ORDER_ID } from '../domain/identificadores-mercado-pago';
 
 type Provider = { create(input: CreateQrOrder): Promise<Record<string, unknown>> };
 type IntentResult = { fingerprint: string; externalPosId: string; messageId: string; correlationId: string; sagaId: string; filialId: string; quoteId: string; quoteVersion: number; clientId: string; reservationId: string; traceparent?: string; tracestate?: string };
@@ -44,7 +45,7 @@ export class SubmitChargeService {
       response = await this.provider.create({ amountInCents: attempt.charge.amountInCents, externalReference: attempt.charge.externalReference, externalPosId: intent.externalPosId, idempotencyKey: attempt.providerKey, expirationMinutes: Math.min(remainingMinutes, 1440) });
       const total = `${Math.floor(attempt.charge.amountInCents / 100)}.${String(attempt.charge.amountInCents % 100).padStart(2, '0')}`;
       const qr = response.type_response;
-      if (typeof response.id !== 'string' || !/^ORD[a-z0-9]{26}$/i.test(response.id) || response.type !== 'qr' || response.external_reference !== attempt.charge.externalReference || response.currency !== 'BRL' || response.total_amount !== total || response.status !== 'created' || !qr || typeof qr !== 'object' || !('qr_data' in qr) || typeof qr.qr_data !== 'string' || !qr.qr_data) throw new Error('Resposta inconsistente');
+      if (typeof response.id !== 'string' || !MERCADO_PAGO_ORDER_ID.test(response.id) || response.type !== 'qr' || response.external_reference !== attempt.charge.externalReference || response.currency !== 'BRL' || response.total_amount !== total || response.status !== 'created' || !qr || typeof qr !== 'object' || !('qr_data' in qr) || typeof qr.qr_data !== 'string' || !qr.qr_data) throw new Error('Resposta inconsistente');
     } catch {
       await this.db.$transaction(async (tx) => {
         const updated = await tx.chargeAttempt.updateMany({ where: { id: attempt.id, status: 'IN_FLIGHT' }, data: { status: 'RECONCILIACAO_NECESSARIA' } });

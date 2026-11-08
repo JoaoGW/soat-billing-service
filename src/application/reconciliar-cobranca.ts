@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
+import { MERCADO_PAGO_ORDER_ID } from '../domain/identificadores-mercado-pago';
 
 type Context = { fingerprint: string; externalPosId: string; messageId: string; correlationId: string; sagaId: string; filialId: string; quoteId: string; quoteVersion: number; clientId: string; reservationId: string; traceparent?: string; tracestate?: string };
 /** Uma notificação autenticada fornece apenas o ID; a order consultada é a evidência. */
@@ -10,7 +11,7 @@ export class ReconcileChargeFromWebhook {
     const notification = await this.db.receivedWebhook.findUnique({ where: { provider_eventId: { provider: 'mercado-pago-orders', eventId } } });
     if (!notification || notification.status !== 'RECEIVED') return 'PENDING';
     const orderId = (notification.payload as { data?: { id?: unknown } }).data?.id;
-    if (typeof orderId !== 'string' || !/^ORD[a-z0-9]{26}$/i.test(orderId)) return 'PENDING';
+    if (typeof orderId !== 'string' || !MERCADO_PAGO_ORDER_ID.test(orderId)) return 'PENDING';
     if (await this.db.charge.findUnique({ where: { providerOrderId: orderId }, select: { id: true } })) return 'PENDING';
     const order = await this.provider.get(orderId);
     if (order.id !== orderId || order.type !== 'qr' || typeof order.external_reference !== 'string' || !['created', 'processed'].includes(String(order.status)) || order.currency !== 'BRL') return 'PENDING';

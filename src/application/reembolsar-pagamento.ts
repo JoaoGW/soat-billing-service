@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { verifyCanonicalPayment, verifyCanonicalRefund } from '../domain/verificar-pagamento';
+import { MERCADO_PAGO_REFUND_ID } from '../domain/identificadores-mercado-pago';
 
 export interface PrepareRefund {
   messageId: string; operationId: string; correlationId: string; refundId: string; paymentId: string; osId: string; sagaId: string; filialId: string;
@@ -80,7 +81,7 @@ export class SubmitRefundService {
       const response = await this.provider.refund(orderId, intent.providerKey);
       const transactions = response.transactions;
       if (response.id !== orderId || !transactions || typeof transactions !== 'object' || !('refunds' in transactions) || !Array.isArray(transactions.refunds)) throw new Error('Resposta de reembolso inválida');
-      const matches = transactions.refunds.filter((item: unknown) => item && typeof item === 'object' && 'transaction_id' in item && item.transaction_id === observation.transactionId && 'id' in item && typeof item.id === 'string' && /^REF[a-z0-9]{26}$/i.test(item.id));
+      const matches = transactions.refunds.filter((item: unknown) => item && typeof item === 'object' && 'transaction_id' in item && item.transaction_id === observation.transactionId && 'id' in item && typeof item.id === 'string' && MERCADO_PAGO_REFUND_ID.test(item.id));
       if (matches.length !== 1) throw new Error('Resposta de reembolso ambígua');
       providerRefundId = (matches[0] as { id: string }).id;
     } catch {

@@ -54,7 +54,7 @@
             },
             "providerOrderId": {
               "type": "string",
-              "pattern": "^ORD[A-Za-z0-9]{26}$"
+              "pattern": "^ORD(?:TST)?[A-Za-z0-9]{26}$"
             },
             "externalReference": {
               "type": "string",
