@@ -161,9 +161,16 @@ Medição do [CI](https://github.com/JoaoGW/soat-billing-service/actions/workflo
 
 Cada execução publica os totais do próprio SHA no resumo do job e como anotação (`scripts/quality/coverage-summary.cjs`) e anexa o relatório completo como artefato.
 
-`npm run quality:sonarjs` aplica regras selecionadas do analisador SonarJS
-(SonarSource) para lógica e segurança com `--max-warnings=0`; é o gate de
-qualidade similar ao SonarQube adotado no CI, sem o painel do SonarQube.
+A qualidade é verificada no **SonarQube Cloud**
+([painel do projeto](https://sonarcloud.io/project/overview?id=JoaoGW_soat-billing-service)): o CI
+envia o código e a cobertura (`coverage/lcov.info`) e aguarda o Quality Gate *Sonar way*
+(confiabilidade, segurança, manutenibilidade, duplicação ≤ 3% e cobertura ≥ 80%
+no código novo); reprovação bloqueia o pipeline e o merge. Antes disso,
+`npm run quality:sonarjs` aplica localmente regras selecionadas do SonarJS com
+`--max-warnings=0`.
+
+[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=JoaoGW_soat-billing-service&metric=alert_status)](https://sonarcloud.io/project/overview?id=JoaoGW_soat-billing-service)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=JoaoGW_soat-billing-service&metric=coverage)](https://sonarcloud.io/project/overview?id=JoaoGW_soat-billing-service)
 
 ## CI/CD e deploy
 
