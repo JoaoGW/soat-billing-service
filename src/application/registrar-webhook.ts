@@ -6,9 +6,12 @@ export class InvalidWebhookSignature extends Error { constructor() { super('Assi
 export class InvalidWebhookPayload extends Error { constructor() { super('Notificação inválida'); } }
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+// Ordem por unidade de código UTF-16, igual ao sort padrão e independente de
+// locale, para que a forma canônica seja idêntica em todos os serviços.
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : Number(a > b));
 function canonical(value: Json): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value !== null && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+  if (value !== null && typeof value === 'object') return `{${Object.keys(value).sort(byCodeUnit).map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
   return JSON.stringify(value);
 }
 

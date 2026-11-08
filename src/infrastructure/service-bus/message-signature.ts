@@ -7,6 +7,9 @@ import {
 } from 'node:crypto';
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+// Ordem por unidade de código UTF-16, igual ao sort padrão e independente de
+// locale, para que a forma canônica seja idêntica em todos os serviços.
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : Number(a > b));
 function canonical(value: unknown): string {
   if (value === null || typeof value === 'boolean' || typeof value === 'string')
     return JSON.stringify(value);
@@ -20,7 +23,7 @@ function canonical(value: unknown): string {
   ) {
     const object = value as Record<string, Json>;
     return `{${Object.keys(object)
-      .sort()
+      .sort(byCodeUnit)
       .map((key) => `${JSON.stringify(key)}:${canonical(object[key])}`)
       .join(',')}}`;
   }
