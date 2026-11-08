@@ -1,0 +1,20 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: soat-billing-migrate
+  labels:
+    app.kubernetes.io/component: migration
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: migrate
+          image: ghcr.io/joaogw/soat-billing-service:sha-not-set-migration
+          envFrom:
+            - secretRef:
+                name: soat-billing-migration

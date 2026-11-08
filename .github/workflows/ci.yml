@@ -22,6 +22,8 @@ jobs:
       - run: npm run test:observability-local
       - run: npm run test:cov -- --watchman=false
       - run: npm run test:coverage-infrastructure -- --watchman=false
+      - name: Publicar resumo de cobertura
+        run: node scripts/quality/coverage-summary.cjs coverage/coverage-summary.json Serviço coverage/infrastructure/coverage-summary.json Infraestrutura
       - run: npm run test:contracts
       - run: npm run test:delivery
       - run: kubectl kustomize deploy/kustomize/overlays/hml > /tmp/service-hml.yaml
@@ -93,9 +95,80 @@ jobs:
           docker run -d --network host --name billing-runtime-ci -e DATABASE_URL billing-runtime-ci:${{ github.sha }}
           trap 'docker rm -f billing-runtime-ci >/dev/null' EXIT
           curl -fsS --retry 20 --retry-delay 1 --retry-all-errors http://127.0.0.1:3000/health
+  deploy_kind:
+    name: Deploy Kubernetes (kind)
+    needs: [quality, integration]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLUSTER: soat-billing
+      NAMESPACE: soat-kind
+      IMAGE: ghcr.io/joaogw/soat-billing-service:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir imagens do SHA avaliado
+        run: |
+          docker build --target runtime -t "$IMAGE" .
+          docker build --target migration -t "$IMAGE-migration" .
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+      - name: Carregar imagens e criar secrets efêmeros
+        run: |
+          kind load docker-image "$IMAGE" "$IMAGE-migration" --name "$CLUSTER"
+          db_password="$(openssl rand -hex 24)"
+          jwt_secret="$(openssl rand -hex 32)"
+          echo "::add-mask::$db_password"
+          echo "::add-mask::$jwt_secret"
+          echo "JWT_CLIENT_SECRET=$jwt_secret" >> "$GITHUB_ENV"
+          database_url="postgresql://billing:${db_password}@billing-postgres:5432/billing_kind"
+          kubectl create namespace "$NAMESPACE"
+          kubectl -n "$NAMESPACE" create secret generic billing-postgres \
+            --from-literal=POSTGRES_USER=billing --from-literal=POSTGRES_PASSWORD="$db_password" --from-literal=POSTGRES_DB=billing_kind
+          kubectl -n "$NAMESPACE" create secret generic soat-billing-migration --from-literal=DATABASE_URL="$database_url"
+          kubectl -n "$NAMESPACE" create secret generic soat-billing-runtime \
+            --from-literal=DATABASE_URL="$database_url" --from-literal=JWT_CLIENT_SECRET="$jwt_secret" \
+            --from-literal=OTEL_SERVICE_VERSION="$GITHUB_SHA"
+      - name: Aplicar banco, migration e Deployment do SHA
+        run: |
+          kubectl kustomize deploy/kustomize/overlays/kind | sed "s/sha-not-set/$GITHUB_SHA/g" > "$RUNNER_TEMP/rendered.yaml"
+          if grep -q 'sha-not-set' "$RUNNER_TEMP/rendered.yaml"; then echo 'Manifesto incompleto'; exit 1; fi
+          kubectl apply -f "$RUNNER_TEMP/rendered.yaml" -l app.kubernetes.io/component=database
+          kubectl -n "$NAMESPACE" rollout status deployment/billing-postgres --timeout=180s
+          kubectl apply -f "$RUNNER_TEMP/rendered.yaml" -l app.kubernetes.io/component=migration
+          kubectl -n "$NAMESPACE" wait --for=condition=complete job/soat-billing-migrate --timeout=180s
+          kubectl apply -f "$RUNNER_TEMP/rendered.yaml" -l '!app.kubernetes.io/component'
+          kubectl -n "$NAMESPACE" rollout status deployment/soat-billing-service --timeout=180s
+      - name: Validar serviço implantado
+        run: |
+          deployed="$(kubectl -n "$NAMESPACE" get deployment soat-billing-service -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          [[ "$deployed" == "$IMAGE" ]] || { echo "Imagem inesperada: $deployed"; exit 1; }
+          kubectl -n "$NAMESPACE" port-forward service/soat-billing-service 18080:80 >/dev/null 2>&1 &
+          trap 'kill %1' EXIT
+          curl -fsS --retry 20 --retry-delay 1 --retry-all-errors http://127.0.0.1:18080/health
+          token="$(node -e 'const c=require("node:crypto");const b=o=>Buffer.from(JSON.stringify(o)).toString("base64url");const now=Math.floor(Date.now()/1e3);const h=b({alg:"HS256",typ:"JWT"});const p=b({sub:"cliente-kind",role:"cliente",iss:"soat-auth-function",aud:"soat-api",iat:now,exp:now+300});process.stdout.write(h+"."+p+"."+c.createHmac("sha256",process.env.JWT_CLIENT_SECRET).update(h+"."+p).digest("base64url"))')"
+          quote="$(cat /proc/sys/kernel/random/uuid)"
+          [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:18080/orcamentos/$quote")" == '401' ]]
+          [[ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "http://127.0.0.1:18080/orcamentos/$quote")" == '404' ]]
+          {
+            echo '### Billing implantado no Kubernetes (kind)'
+            echo "- Imagem: \`$deployed\`"
+            echo '- Migration do banco próprio concluída antes do rollout'
+            echo '- `/health` 200, rota sem token 401 e consulta autenticada ao PostgreSQL 404'
+            echo '```'
+            kubectl -n "$NAMESPACE" get deployments,pods,jobs,services -o wide
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Diagnóstico do cluster
+        if: failure()
+        run: |
+          kubectl -n "$NAMESPACE" get all,jobs -o wide || true
+          kubectl -n "$NAMESPACE" describe pods || true
+          kubectl -n "$NAMESPACE" logs -l app=soat-billing-service --tail=200 || true
+          kubectl -n "$NAMESPACE" logs job/soat-billing-migrate --tail=200 || true
   publish:
     name: Publicar imagens Billing aprovadas
-    needs: [quality, integration]
+    needs: [quality, integration, deploy_kind]
     if: github.event_name == 'push' && github.ref == 'refs/heads/development' && vars.HML_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
