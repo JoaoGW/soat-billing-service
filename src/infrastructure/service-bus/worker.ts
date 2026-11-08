@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
 import { WorkloadIdentityCredential } from '@azure/identity';
+import { localServiceBusConnection } from '../local-emulators';
 import { ServiceBusClient, ServiceBusReceiver, ServiceBusSender } from '@azure/service-bus';
 import { PrismaClient } from '@prisma/client';
 import { resolve } from 'node:path';
@@ -52,9 +53,10 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
     const queue = process.env.SERVICE_BUS_COMMAND_QUEUE;
     const topic = process.env.SERVICE_BUS_EVENT_TOPIC;
     const signingKey = process.env.BILLING_MESSAGE_PRIVATE_KEY; const osKey = process.env.OS_MESSAGE_PUBLIC_KEY;
-    if (!signingKey || !osKey || !namespace || !/^[a-z0-9-]+\.servicebus\.windows\.net$/i.test(namespace) ||
-        !queue || !topic || !process.env.DATABASE_URL || !process.env.AZURE_TENANT_ID ||
-        !process.env.AZURE_CLIENT_ID || !process.env.AZURE_FEDERATED_TOKEN_FILE) {
+    const emulator = localServiceBusConnection();
+    const workload = !!namespace && /^[a-z0-9-]+\.servicebus\.windows\.net$/i.test(namespace) && !!process.env.AZURE_TENANT_ID &&
+      !!process.env.AZURE_CLIENT_ID && !!process.env.AZURE_FEDERATED_TOKEN_FILE;
+    if (!signingKey || !osKey || !(emulator || workload) || !queue || !topic || !process.env.DATABASE_URL) {
       throw new Error('Configuração incompleta do worker Service Bus');
     }
     const signer = new MessageSigner(signingKey); const verifier = new MessageVerifier(osKey, 'soat-os-service');
@@ -76,7 +78,7 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
     if (reconcileEnabled && !refundEnabled) throw new Error('Reembolso não configurado para reconciliação');
     const chargeValidator = chargeEnabled ? createChargeCommandValidator(resolve(process.cwd(), 'docs/contracts/messages')) : undefined;
     this.prisma = new PrismaClient();
-    this.client = new ServiceBusClient(namespace, new WorkloadIdentityCredential());
+    this.client = emulator ? new ServiceBusClient(emulator) : new ServiceBusClient(namespace as string, new WorkloadIdentityCredential());
     this.sender = this.client.createSender(topic);
     this.receiver = this.client.createReceiver(queue, { receiveMode: 'peekLock' });
     if (evidenceEnabled && evidenceSubscription && evidenceVerifier) {

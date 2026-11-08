@@ -1,3 +1,5 @@
+import { mercadoPagoBaseUrl } from '../local-emulators';
+
 /** A provider response is evidence to reconcile, not confirmation of payment. */
 export class MercadoPagoError extends Error {
   constructor(readonly kind: 'RECONCILE' | 'REJECTED' | 'UNAVAILABLE', readonly status?: number) {
@@ -17,8 +19,9 @@ type HttpFetch = (input: string, init: RequestInit) => Promise<Response>;
 
 /** No retries: mutation uncertainty must be resolved using durable intent and reconciliation. */
 export class MercadoPagoOrdersClient {
-  private readonly endpoint = 'https://api.mercadopago.com/v1/orders';
-  constructor(private readonly token: string, private readonly http: HttpFetch = fetch, private readonly timeoutMs = 10000) {
+  private readonly endpoint: string;
+  constructor(private readonly token: string, private readonly http: HttpFetch = fetch, private readonly timeoutMs = 10000, private readonly baseUrl = mercadoPagoBaseUrl()) {
+    this.endpoint = `${baseUrl}/v1/orders`;
     if (!token || /[\r\n]/.test(token) || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error('Configuração Mercado Pago inválida');
   }
 
@@ -43,7 +46,7 @@ export class MercadoPagoOrdersClient {
     if (typeof paymentId !== 'string' || !/^[0-9]{1,20}$/.test(paymentId)) throw new Error('ID de pagamento inválido');
     let response: Response;
     try {
-      response = await this.http(`https://api.mercadopago.com/v1/payments/${paymentId}`, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(this.timeoutMs), headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/json' } });
+      response = await this.http(`${this.baseUrl}/v1/payments/${paymentId}`, { method: 'GET', redirect: 'error', signal: AbortSignal.timeout(this.timeoutMs), headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/json' } });
     } catch { throw new MercadoPagoError('UNAVAILABLE'); }
     if (!response.ok) throw new MercadoPagoError(response.status >= 500 || response.status === 429 ? 'UNAVAILABLE' : 'REJECTED', response.status);
     let data: unknown;

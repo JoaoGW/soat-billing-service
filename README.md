@@ -120,6 +120,15 @@ reembolso. O worker SMTP (`ENABLE_NOTIFICATION_WORKER=true`) exige TLS e usa ID
 de mensagem estável. Os segredos devem vir do Key Vault; não compartilhe chaves
 privadas entre serviços.
 
+## Ambiente local com emuladores
+
+Com `ALLOW_LOCAL_EMULATORS=true`, o worker aceita `SERVICE_BUS_CONNECTION_STRING`
+do Service Bus Emulator (somente com `UseDevelopmentEmulator=true`) e o adapter
+do Mercado Pago aceita `MERCADO_PAGO_API_BASE_URL` para o provedor simulado. Sem
+a trava, a conexão continua exclusiva por identidade de workload e a API oficial
+do Mercado Pago. O ambiente completo dos três serviços em kind está em
+[soat-api/docs/ambiente-kind.md](https://github.com/JoaoGW/soat-api/blob/development/docs/ambiente-kind.md).
+
 ## Execução e testes
 
 Com Node 24:

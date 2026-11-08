@@ -75,6 +75,18 @@ describe('BillingMessageWorker', () => {
     expect(prisma.$disconnect).toHaveBeenCalled();
   });
 
+  it('usa o emulador somente com a trava explícita e connection string de desenvolvimento', async () => {
+    const emulator = 'Endpoint=sb://servicebus;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;';
+    Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', SERVICE_BUS_CONNECTION_STRING: emulator, SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test' });
+    delete process.env.SERVICE_BUS_NAMESPACE;
+    expect(() => new BillingMessageWorker().onModuleInit()).toThrow('Configuração incompleta');
+    process.env.ALLOW_LOCAL_EMULATORS = 'true';
+    const worker = new BillingMessageWorker(); worker.onModuleInit();
+    expect(ServiceBusClient).toHaveBeenCalledWith(emulator);
+    expect(WorkloadIdentityCredential).not.toHaveBeenCalled();
+    await worker.onApplicationShutdown();
+  });
+
   it('não envia cobrança quando integração está desativada', async () => {
     Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
     const worker = new BillingMessageWorker(); worker.onModuleInit();

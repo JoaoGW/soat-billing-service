@@ -27,6 +27,13 @@ describe('MercadoPagoOrdersClient', () => {
     await expect(client.getPayment('12345')).rejects.toMatchObject({ kind: 'UNAVAILABLE' });
     await expect(client.getPayment('../123')).rejects.toThrow('inválido');
   });
+  it('usa o endereço informado para o provedor simulado do ambiente local', async () => {
+    const local = new MercadoPagoOrdersClient('token', http, 1000, 'http://mercado-pago-simulado:8080');
+    http.mockResolvedValueOnce(new Response(JSON.stringify({ id, status: 'created' }), { status: 200 }));
+    http.mockResolvedValueOnce(new Response(JSON.stringify({ id: 12345 }), { status: 200 }));
+    await local.get(id); await local.getPayment('12345');
+    expect(http.mock.calls.map(([url]) => url)).toEqual([`http://mercado-pago-simulado:8080/v1/orders/${id}`, 'http://mercado-pago-simulado:8080/v1/payments/12345']);
+  });
   it('não chama o provedor com dados inválidos', async () => {
     await expect(client.create({ ...input, amountInCents: 0 })).rejects.toThrow('inválidos');
     await expect(client.create({ ...input, externalReference: '../' })).rejects.toThrow('inválidos');
