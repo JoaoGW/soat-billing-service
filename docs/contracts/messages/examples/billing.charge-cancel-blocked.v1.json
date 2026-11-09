@@ -1,0 +1,23 @@
+{
+  "messageId": "message-001",
+  "type": "billing.charge-cancel-blocked.v1",
+  "schemaVersion": 1,
+  "occurredAt": "2030-01-01T00:00:00Z",
+  "producer": "soat-billing-service",
+  "aggregateType": "saga",
+  "aggregateId": "saga-001",
+  "aggregateVersion": 1,
+  "osId": "os-001",
+  "sagaId": "saga-001",
+  "filialId": "branch-001",
+  "correlationId": "correlation-001",
+  "causationId": "message-000",
+  "operationId": "operation-001",
+  "data": {
+    "chargeId": "chargeId-1",
+    "reservationId": "reservationId-1",
+    "cancelOperationId": "cancelOperationId-1",
+    "cancelEventId": "cancelEventId-1",
+    "reasonCode": "CANCEL_EVIDENCE_MISMATCH"
+  }
+}

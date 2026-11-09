@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://soat.example/contracts/messages/billing.refund-payment.v1.schema.json",
+  "allOf": [
+    { "$ref": "https://soat.example/contracts/messages/envelope.v1.schema.json" },
+    { "type": "object", "properties": {
+      "type": { "const": "billing.refund-payment.v1" },
+      "producer": { "const": "soat-os-service" },
+      "data": { "type": "object", "additionalProperties": false, "required": ["refundId", "paymentId", "cancelOperationId", "cancelEventId", "reason"],
+        "properties": {
+          "refundId": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,128}$" },
+          "paymentId": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,128}$" },
+          "cancelOperationId": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,128}$" },
+          "cancelEventId": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,128}$" },
+          "reason": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,128}$" }
+        }
+      }
+    } }
+  ]
+}

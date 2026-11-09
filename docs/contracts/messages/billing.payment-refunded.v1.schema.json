@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://soat.example/contracts/messages/billing.payment-refunded.v1.schema.json",
+  "allOf": [
+    {
+      "$ref": "https://soat.example/contracts/messages/envelope.v1.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "billing.payment-refunded.v1"
+        },
+        "producer": {
+          "const": "soat-billing-service"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "refundId",
+            "paymentId",
+            "chargeId",
+            "quoteId",
+            "quoteVersion",
+            "amountInCents",
+            "currency",
+            "providerOrderId",
+            "providerRefundId",
+            "cancelOperationId"
+          ],
+          "properties": {
+            "refundId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "paymentId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "chargeId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "quoteId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "providerOrderId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "providerRefundId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cancelOperationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "quoteVersion": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "amountInCents": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "currency": {
+              "const": "BRL"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

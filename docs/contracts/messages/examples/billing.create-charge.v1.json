@@ -1,0 +1,27 @@
+{
+  "messageId": "message-001",
+  "schemaVersion": 1,
+  "occurredAt": "2030-01-01T00:00:00Z",
+  "aggregateType": "saga",
+  "aggregateId": "saga-001",
+  "aggregateVersion": 1,
+  "osId": "os-001",
+  "sagaId": "saga-001",
+  "filialId": "branch-001",
+  "correlationId": "correlation-001",
+  "causationId": "message-000",
+  "operationId": "operation-001",
+  "type": "billing.create-charge.v1",
+  "producer": "soat-os-service",
+  "data": {
+    "quoteId": "quote-001",
+    "quoteVersion": 1,
+    "chargeId": "charge-001",
+    "clientId": "client-001",
+    "totalInCents": 5000,
+    "currency": "BRL",
+    "externalPosId": "pos-001",
+    "expiresAt": "2030-01-01T00:15:00Z",
+    "reservationId": "reservation-001"
+  }
+}

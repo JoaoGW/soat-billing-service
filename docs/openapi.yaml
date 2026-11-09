@@ -1,0 +1,168 @@
+openapi: 3.0.3
+info:
+  title: SOAT Billing
+  version: 1.0.0
+  description: Contratos disponíveis na Fase 4. IDs do cliente são obtidos do JWT, nunca do corpo da requisição.
+paths:
+  /health:
+    get:
+      summary: Estado do processo
+      responses:
+        '200': { description: Processo disponível }
+  /orcamentos/{id}:
+    get:
+      summary: Consultar orçamento próprio
+      security: [{ cliente: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200':
+          description: Orçamento e snapshot de itens
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Quote' }
+        '400': { description: Identificador inválido }
+        '401': { description: JWT inválido }
+        '403': { description: Orçamento pertence a outro cliente }
+        '404': { description: Orçamento inexistente }
+        '503': { description: Consulta indisponível }
+  /orcamentos/{id}/aprovar:
+    post:
+      summary: Aprovar versão do orçamento próprio
+      security: [{ cliente: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/CorrelationId' }]
+      requestBody: { $ref: '#/components/requestBodies/Decision' }
+      responses:
+        '200': { $ref: '#/components/responses/Decision' }
+        '400': { description: Requisição inválida }
+        '401': { description: JWT inválido }
+        '403': { description: Orçamento pertence a outro cliente }
+        '404': { description: Orçamento inexistente }
+        '409': { description: Versão, estado ou chave conflitante }
+        '503': { description: Operação indisponível }
+  /orcamentos/{id}/recusar:
+    post:
+      summary: Recusar versão do orçamento próprio
+      security: [{ cliente: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }, { $ref: '#/components/parameters/IdempotencyKey' }, { $ref: '#/components/parameters/CorrelationId' }]
+      requestBody: { $ref: '#/components/requestBodies/Decision' }
+      responses:
+        '200': { $ref: '#/components/responses/Decision' }
+        '400': { description: Requisição inválida }
+        '401': { description: JWT inválido }
+        '403': { description: Orçamento pertence a outro cliente }
+        '404': { description: Orçamento inexistente }
+        '409': { description: Versão, estado ou chave conflitante }
+        '503': { description: Operação indisponível }
+  /cobrancas/{id}:
+    get:
+      summary: Consultar cobrança própria
+      security: [{ cliente: [] }]
+      parameters: [{ $ref: '#/components/parameters/ChargeId' }]
+      responses:
+        '200': { $ref: '#/components/responses/Charge' }
+        '400': { description: Identificador inválido }
+        '401': { description: JWT inválido }
+        '404': { description: Cobrança inexistente ou não pertencente ao cliente }
+        '503': { description: Consulta indisponível }
+  /cobrancas/por-os/{osId}:
+    get:
+      summary: Consultar cobrança mais recente de uma OS própria
+      security: [{ cliente: [] }]
+      parameters:
+        - { name: osId, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 128, pattern: '^[a-zA-Z0-9_-]+$' } }
+      responses:
+        '200': { $ref: '#/components/responses/Charge' }
+        '400': { description: Identificador inválido }
+        '401': { description: JWT inválido }
+        '404': { description: Cobrança inexistente ou não pertencente ao cliente }
+        '503': { description: Consulta indisponível }
+  /webhooks/mercado-pago:
+    post:
+      summary: Receber notificação assinada de order
+      description: Disponível somente quando a recepção, o processador e o segredo do webhook estão configurados. A notificação é persistida antes da consulta canônica ao provedor.
+      parameters:
+        - { name: x-signature, in: header, required: true, schema: { type: string } }
+        - { name: x-request-id, in: header, required: true, schema: { type: string } }
+        - { name: data.id, in: query, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, action, data]
+              properties:
+                type: { type: string, enum: [order] }
+                action: { type: string }
+                data: { type: object, required: [id], properties: { id: { type: string } } }
+      responses:
+        '200': { description: Notificação registrada ou duplicada }
+        '400': { description: Payload inválido }
+        '401': { description: Assinatura inválida }
+        '503': { description: Processador desativado ou indisponível }
+components:
+  securitySchemes:
+    cliente: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 128 } }
+    ChargeId: { name: id, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 128, pattern: '^[a-zA-Z0-9_-]+$' } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, description: Chave não vazia; reutilizá-la com outra decisão gera conflito., schema: { type: string, minLength: 1, maxLength: 128 } }
+    CorrelationId: { name: X-Correlation-Id, in: header, required: false, description: Correlação opcional; se estiver vazia ou exceder 128 caracteres será gerado um novo identificador., schema: { type: string } }
+  schemas:
+    Quote:
+      type: object
+      required: [id, osId, version, status, totalInCents, currency, expiresAt, items]
+      properties:
+        id: { type: string }
+        osId: { type: string }
+        version: { type: integer, minimum: 1 }
+        status: { type: string, enum: [ISSUED, APPROVED, REJECTED, EXPIRED, CANCELLED] }
+        totalInCents: { type: integer, minimum: 0 }
+        currency: { type: string, example: BRL }
+        expiresAt: { type: string, format: date-time }
+        items:
+          type: array
+          items:
+            type: object
+            required: [sourceId, itemType, description, quantity, unitPriceInCents]
+            properties:
+              sourceId: { type: string }
+              itemType: { type: string, enum: [PART, SERVICE] }
+              description: { type: string }
+              quantity: { type: integer, minimum: 1 }
+              unitPriceInCents: { type: integer, minimum: 0 }
+    DecisionResult:
+      type: object
+      required: [quoteId, version, decision]
+      properties:
+        quoteId: { type: string }
+        version: { type: integer, minimum: 1 }
+        decision: { type: string, enum: [APPROVED, REJECTED] }
+  requestBodies:
+    Decision:
+      required: true
+      content:
+        application/json:
+          schema: { type: object, additionalProperties: false, required: [versao], properties: { versao: { type: integer, minimum: 1 } } }
+  responses:
+    Decision:
+      description: Decisão registrada ou repetição idempotente
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/DecisionResult' }
+    Charge:
+      description: Cobrança própria; qrData só aparece para cobrança criada e não expirada.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [id, osId, quoteId, status, amountInCents, currency, expiresAt]
+            properties:
+              id: { type: string }
+              osId: { type: string }
+              quoteId: { type: string }
+              status: { type: string }
+              amountInCents: { type: integer }
+              currency: { type: string, example: BRL }
+              expiresAt: { type: string, format: date-time }
+              qrData: { type: string }

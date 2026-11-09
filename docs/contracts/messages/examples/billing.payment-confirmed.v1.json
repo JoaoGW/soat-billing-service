@@ -1,0 +1,27 @@
+{
+  "messageId": "message-001",
+  "type": "billing.payment-confirmed.v1",
+  "schemaVersion": 1,
+  "occurredAt": "2026-10-30T15:00:00Z",
+  "producer": "soat-billing-service",
+  "aggregateType": "payment",
+  "aggregateId": "payment-001",
+  "aggregateVersion": 1,
+  "osId": "os-001",
+  "sagaId": "saga-001",
+  "filialId": "filial-001",
+  "correlationId": "correlation-001",
+  "causationId": "message-000",
+  "operationId": "operation-001",
+  "data": {
+    "chargeId": "charge-001",
+    "quoteId": "quote-001",
+    "quoteVersion": 1,
+    "paymentId": "payment-001",
+    "providerOrderId": "order-001",
+    "providerPaymentId": "provider-payment-001",
+    "amountInCents": 15000,
+    "currency": "BRL",
+    "paidAt": "2026-10-30T14:59:59Z"
+  }
+}

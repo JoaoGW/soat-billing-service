@@ -1,0 +1,88 @@
+import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
+import Ajv from 'ajv';
+import addFormats from 'ajv-formats';
+import { PrismaClient } from '@prisma/client';
+import { ServiceBusReceivedMessage, ServiceBusReceiver } from '@azure/service-bus';
+import { PrepareRefund, PrepareRefundService, SubmitRefundService, ConfirmRefundService, RefundEvidenceMismatchError } from '../../application/reembolsar-pagamento';
+
+type Envelope = Omit<PrepareRefund, 'refundId' | 'paymentId' | 'cancelOperationId' | 'cancelEventId' | 'reason'> & { type: string; data: Pick<PrepareRefund, 'refundId' | 'paymentId' | 'cancelOperationId' | 'cancelEventId' | 'reason'> };
+type Receiver = Pick<ServiceBusReceiver, 'completeMessage' | 'abandonMessage' | 'deadLetterMessage'>;
+export function refundCommandValidator(directory: string): (value: unknown) => boolean {
+  const ajv = new Ajv({ allErrors: true }); addFormats(ajv);
+  const read = (file: string): object => JSON.parse(readFileSync(resolve(directory, file), 'utf8')) as object;
+  ajv.addSchema(read('envelope.schema.json')); const validate = ajv.compile(read('billing.refund-payment.v1.schema.json'));
+  return (value) => validate(value) === true;
+}
+/** The caller verifies OS signature before invoking this consumer. */
+export class RefundCommandConsumer {
+  constructor(private readonly db: PrismaClient, private readonly validate: (value: unknown) => boolean) {}
+  async process(message: ServiceBusReceivedMessage, receiver: Receiver): Promise<void> {
+    const body: unknown = message.body;
+    if (!this.validate(body) || !body || typeof body !== 'object' || !('messageId' in body) || body.messageId !== message.messageId || (message.subject && message.subject !== 'billing.refund-payment.v1')) {
+      await receiver.deadLetterMessage(message, { deadLetterReason: 'InvalidContract', deadLetterErrorDescription: 'Comando inválido' }); return;
+    }
+    const event = body as Envelope; const encoded = JSON.stringify(event); const consumer = 'billing.refund-staging';
+    try {
+      await this.db.$transaction(async (tx) => {
+        await tx.$executeRaw`INSERT INTO "Inbox" ("consumer", "messageId", "operationId", "type", "payload", "status") VALUES (${consumer}, ${event.messageId}, ${event.operationId}, ${event.type}, ${encoded}::jsonb, 'PENDING') ON CONFLICT DO NOTHING`;
+        const rows = await tx.$queryRaw<Array<{ matches: boolean }>>`SELECT ("operationId" = ${event.operationId} AND "type" = ${event.type} AND "payload" = ${encoded}::jsonb) AS "matches" FROM "Inbox" WHERE "consumer" = ${consumer} AND "messageId" = ${event.messageId}`;
+        if (!rows[0]?.matches) throw new Error('Mensagem reutilizada com outro conteúdo');
+      });
+    } catch { await receiver.abandonMessage(message); return; }
+    await receiver.completeMessage(message);
+  }
+}
+/** Re-evaluates persisted commands when authenticated evidence arrives. */
+export class RefundCommandProcessor {
+  private cursor = '';
+  constructor(private readonly db: PrismaClient, private readonly prepare: PrepareRefundService, private readonly submit: SubmitRefundService, private readonly confirm: ConfirmRefundService, private readonly validate: (value: unknown) => boolean) {}
+  async processOne(): Promise<'EMPTY' | 'PENDING' | 'REFUNDED' | 'RECONCILIACAO_NECESSARIA'> {
+    const findNext = (cursor: string) => this.db.$queryRaw<Array<{ messageId: string; payload: unknown }>>`SELECT s."messageId", s."payload" FROM "Inbox" s WHERE s."consumer" = 'billing.refund-staging' AND s."status" = 'PENDING' AND s."messageId" > ${cursor} AND EXISTS (SELECT 1 FROM "Inbox" e WHERE e."consumer" = 'billing.compensation-evidence' AND e."messageId" = s."payload"->'data'->>'cancelEventId' AND e."status" = 'APPLIED') ORDER BY s."messageId" LIMIT 1`;
+    let rows = await findNext(this.cursor);
+    if (!rows.length && this.cursor) { this.cursor = ''; rows = await findNext(this.cursor); }
+    const row = rows[0]; if (!row) return 'EMPTY';
+    this.cursor = row.messageId;
+    if (!this.validate(row.payload)) throw new Error('Comando persistido inválido');
+    const event = row.payload as Envelope; const input: PrepareRefund = { messageId: event.messageId, operationId: event.operationId, correlationId: event.correlationId, osId: event.osId, sagaId: event.sagaId, filialId: event.filialId, ...(event.traceparent ? { traceparent: event.traceparent } : {}), ...(event.tracestate ? { tracestate: event.tracestate } : {}), ...event.data };
+    const evidence = await this.db.inbox.findUnique({ where: { consumer_messageId: { consumer: 'billing.compensation-evidence', messageId: input.cancelEventId } } });
+    if (!evidence) return 'PENDING';
+    try {
+      await this.prepare.execute(input);
+      const submitted = await this.submit.execute(input.operationId);
+      const outcome = submitted === 'PENDING_CONFIRMATION' ? await this.confirm.execute(input.operationId) : submitted;
+      if (outcome === 'RECONCILIACAO_NECESSARIA') {
+        await this.recordIncident(input, 'PROVIDER_RESULT_UNKNOWN');
+        return outcome;
+      }
+      if (outcome === 'REFUNDED') {
+        await this.db.inbox.updateMany({ where: { consumer: 'billing.refund-staging', messageId: event.messageId, status: 'PENDING' }, data: { status: outcome, appliedAt: new Date() } });
+        return outcome;
+      }
+      return 'PENDING';
+    } catch (error) {
+      if (error instanceof RefundEvidenceMismatchError) {
+        await this.recordIncident(input, 'EVIDENCE_MISMATCH');
+        return 'RECONCILIACAO_NECESSARIA';
+      }
+      return 'PENDING';
+    }
+  }
+  private async recordIncident(input: PrepareRefund, reasonCode: 'EVIDENCE_MISMATCH' | 'PROVIDER_RESULT_UNKNOWN'): Promise<void> {
+        await this.db.$transaction(async (tx) => {
+          const now = new Date();
+          const updated = await tx.inbox.updateMany({ where: { consumer: 'billing.refund-staging', messageId: input.messageId, status: 'PENDING' }, data: { status: 'RECONCILIACAO_NECESSARIA', appliedAt: now } });
+          if (!updated.count) return;
+          const messageId = randomUUID(); const type = 'billing.refund-blocked.v1';
+          await tx.outbox.create({ data: { messageId, type, payload: {
+            messageId, type, schemaVersion: 1, occurredAt: now.toISOString(), producer: 'soat-billing-service',
+            aggregateType: 'refund', aggregateId: input.refundId, aggregateVersion: 1,
+            osId: input.osId, sagaId: input.sagaId, filialId: input.filialId,
+            correlationId: input.correlationId, causationId: input.messageId, operationId: input.operationId,
+            ...(input.traceparent ? { traceparent: input.traceparent } : {}), ...(input.tracestate ? { tracestate: input.tracestate } : {}),
+            data: { refundId: input.refundId, paymentId: input.paymentId, cancelOperationId: input.cancelOperationId, cancelEventId: input.cancelEventId, reasonCode },
+          } } });
+        });
+  }
+}

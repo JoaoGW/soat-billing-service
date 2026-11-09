@@ -1,0 +1,30 @@
+import { randomUUID, generateKeyPairSync } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { PrismaClient } from '@prisma/client';
+import { ServiceBusReceivedMessage, ServiceBusReceiver } from '@azure/service-bus';
+import { MessageSigner, MessageVerifier } from '../../src/infrastructure/service-bus/message-signature';
+import { CompensationEvidenceConsumer, evidenceValidator } from '../../src/infrastructure/service-bus/compensation-evidence';
+const url = process.env.DATABASE_URL;
+if (!url || !['localhost', '127.0.0.1', '::1'].includes(new URL(url).hostname) || !new URL(url).pathname.endsWith('_test')) throw new Error('A integração exige banco local de teste');
+describe('evidência autenticada de cancelamento', () => {
+  const db = new PrismaClient(); const keys = generateKeyPairSync('ed25519');
+  const signer = new MessageSigner(keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString());
+  const verifier = new MessageVerifier(keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), 'soat-execution-service');
+  const handler = new CompensationEvidenceConsumer(db, verifier, evidenceValidator(resolve(process.cwd(), 'docs/contracts/messages')));
+  const receiver = { completeMessage: jest.fn().mockResolvedValue(undefined), abandonMessage: jest.fn().mockResolvedValue(undefined), deadLetterMessage: jest.fn().mockResolvedValue(undefined) };
+  afterAll(async () => { await db.$disconnect(); });
+  it('persiste apenas evidência assinada e é idempotente', async () => {
+    const example = JSON.parse(readFileSync(resolve(process.cwd(), 'docs/contracts/messages/examples/execution.work-cancelled.v1.json'), 'utf8')) as Record<string, unknown>;
+    const body = { ...example, messageId: randomUUID(), operationId: randomUUID() };
+    const message = { body, messageId: body.messageId, subject: 'execution.work-cancelled.v1', applicationProperties: { signature: signer.sign(body) } } as unknown as ServiceBusReceivedMessage;
+    await handler.process(message, receiver as unknown as ServiceBusReceiver); await handler.process(message, receiver as unknown as ServiceBusReceiver);
+    expect(receiver.completeMessage).toHaveBeenCalledTimes(2);
+    const evidence = await db.inbox.findUnique({ where: { consumer_messageId: { consumer: 'billing.compensation-evidence', messageId: body.messageId as string } } });
+    expect(evidence?.status).toBe('APPLIED');
+    const forged = { ...message, body: { ...body, data: { outcome: 'CANCELLED', reason: 'FAKE' } } };
+    await handler.process(forged, receiver as unknown as ServiceBusReceiver);
+    expect(receiver.deadLetterMessage).toHaveBeenCalledTimes(1);
+    expect((await db.inbox.findUnique({ where: { consumer_messageId: { consumer: 'billing.compensation-evidence', messageId: body.messageId as string } } }))?.payload).toEqual(body);
+  });
+});

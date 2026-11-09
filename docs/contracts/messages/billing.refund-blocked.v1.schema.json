@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://soat.example/contracts/messages/billing.refund-blocked.v1.schema.json",
+  "allOf": [
+    {
+      "$ref": "https://soat.example/contracts/messages/envelope.v1.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "billing.refund-blocked.v1"
+        },
+        "producer": {
+          "const": "soat-billing-service"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "refundId",
+            "paymentId",
+            "cancelOperationId",
+            "cancelEventId",
+            "reasonCode"
+          ],
+          "properties": {
+            "refundId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "paymentId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cancelOperationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cancelEventId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reasonCode": {
+              "enum": [
+                "EVIDENCE_MISMATCH",
+                "PROVIDER_RESULT_UNKNOWN"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

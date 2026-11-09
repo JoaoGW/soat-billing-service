@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://soat.example/contracts/messages/envelope.v1.schema.json",
+  "type": "object",
+  "required": ["messageId", "type", "schemaVersion", "occurredAt", "producer", "aggregateType", "aggregateId", "aggregateVersion", "osId", "sagaId", "filialId", "correlationId", "causationId", "operationId", "data"],
+  "properties": {
+    "messageId": { "type": "string", "minLength": 1 },
+    "type": { "type": "string", "minLength": 1 },
+    "schemaVersion": { "const": 1 },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "producer": { "type": "string", "minLength": 1 },
+    "aggregateType": { "type": "string", "minLength": 1 },
+    "aggregateId": { "type": "string", "minLength": 1 },
+    "aggregateVersion": { "type": "integer", "minimum": 1 },
+    "osId": { "type": "string", "minLength": 1 },
+    "sagaId": { "type": "string", "minLength": 1 },
+    "filialId": { "type": "string", "minLength": 1 },
+    "correlationId": { "type": "string", "minLength": 1 },
+    "causationId": { "type": "string", "minLength": 1 },
+    "operationId": { "type": "string", "minLength": 1 },
+    "traceparent": { "type": "string", "minLength": 1 },
+    "tracestate": { "type": "string" },
+    "data": { "type": "object" }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://soat.example/contracts/messages/billing.charge-cancel-blocked.v1.schema.json",
+  "allOf": [
+    {
+      "$ref": "https://soat.example/contracts/messages/envelope.v1.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "billing.charge-cancel-blocked.v1"
+        },
+        "producer": {
+          "const": "soat-billing-service"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "chargeId",
+            "reservationId",
+            "cancelOperationId",
+            "cancelEventId",
+            "reasonCode"
+          ],
+          "properties": {
+            "chargeId": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            },
+            "reservationId": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            },
+            "cancelOperationId": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            },
+            "cancelEventId": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            },
+            "reasonCode": {
+              "enum": [
+                "CANCEL_EVIDENCE_MISMATCH",
+                "CANCEL_CHARGE_MISMATCH",
+                "CANCEL_OPERATION_MISMATCH"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}
