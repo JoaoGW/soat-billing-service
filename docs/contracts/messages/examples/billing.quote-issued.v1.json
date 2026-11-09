@@ -1,0 +1,24 @@
+{
+  "messageId": "message-001",
+  "type": "billing.quote-issued.v1",
+  "schemaVersion": 1,
+  "occurredAt": "2026-10-30T15:00:00Z",
+  "producer": "soat-billing-service",
+  "aggregateType": "quote",
+  "aggregateId": "quote-001",
+  "aggregateVersion": 1,
+  "osId": "os-001",
+  "sagaId": "saga-001",
+  "filialId": "filial-001",
+  "correlationId": "correlation-001",
+  "causationId": "message-000",
+  "operationId": "operation-001",
+  "data": {
+    "quoteId": "quote-001",
+    "quoteVersion": 1,
+    "clientId": "cliente-001",
+    "totalInCents": 15000,
+    "currency": "BRL",
+    "expiresAt": "2030-01-02T00:00:00Z"
+  }
+}

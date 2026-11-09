@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://soat.example/contracts/messages/billing.create-charge.v1.schema.json",
+  "allOf": [
+    {
+      "$ref": "https://soat.example/contracts/messages/envelope.v1.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "billing.create-charge.v1"
+        },
+        "producer": {
+          "const": "soat-os-service"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "quoteId",
+            "quoteVersion",
+            "chargeId",
+            "clientId",
+            "totalInCents",
+            "currency",
+            "externalPosId",
+            "expiresAt",
+            "reservationId"
+          ],
+          "properties": {
+            "quoteId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "quoteVersion": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "chargeId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "clientId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "totalInCents": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "currency": {
+              "const": "BRL"
+            },
+            "externalPosId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "reservationId": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "messageId": "message-001",
+  "type": "execution.request-diagnosis.v1",
+  "schemaVersion": 1,
+  "occurredAt": "2026-10-30T15:00:00Z",
+  "producer": "soat-os-service",
+  "aggregateType": "saga",
+  "aggregateId": "saga-001",
+  "aggregateVersion": 1,
+  "osId": "os-001",
+  "sagaId": "saga-001",
+  "filialId": "filial-001",
+  "correlationId": "correlation-001",
+  "causationId": "message-000",
+  "operationId": "operation-001",
+  "data": {
+    "veiculoId": "veiculo-001"
+  }
+}

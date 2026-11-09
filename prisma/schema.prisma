@@ -24,6 +24,7 @@ model Quote {
   items        QuoteItem[]
   decision     QuoteDecision?
   charges      Charge[]
+  notification Notification?
 
   @@unique([osId, version])
 }
@@ -134,6 +135,33 @@ model Inbox {
   @@index([status, receivedAt])
 }
 
+model CommandOperation {
+  consumer    String
+  operationId String
+  payloadHash String
+  result      Json
+  createdAt   DateTime @default(now())
+
+  @@id([consumer, operationId])
+}
+
+model Notification {
+  id            String    @id
+  quoteId       String
+  recipient     String
+  status        String    @default("PENDING")
+  attemptCount  Int       @default(0)
+  nextAttemptAt DateTime  @default(now())
+  claimUntil    DateTime?
+  claimOwner    String?
+  sentAt        DateTime?
+  createdAt     DateTime  @default(now())
+  quote         Quote     @relation(fields: [quoteId], references: [id], onDelete: Restrict)
+
+  @@unique([quoteId])
+  @@index([status, nextAttemptAt])
+}
+
 model Outbox {
   messageId     String    @id
   type          String
@@ -147,6 +175,18 @@ model Outbox {
   publishedAt   DateTime?
 
   @@index([status, nextAttemptAt])
+}
+
+model BillingRecoveryAudit {
+  id          String   @id
+  messageId   String
+  eventType   String
+  actor       String
+  reasonCode  String
+  payloadHash String
+  occurredAt  DateTime @default(now())
+
+  @@index([messageId, occurredAt])
 }
 
 model IdempotencyRequest {

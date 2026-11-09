@@ -1,0 +1,28 @@
+{
+  "messageId": "message-001",
+  "type": "billing.payment-refunded.v1",
+  "schemaVersion": 1,
+  "occurredAt": "2030-01-01T00:00:00Z",
+  "producer": "soat-billing-service",
+  "aggregateType": "refund",
+  "aggregateId": "refund-001",
+  "aggregateVersion": 1,
+  "osId": "os-001",
+  "sagaId": "saga-001",
+  "filialId": "branch-001",
+  "correlationId": "correlation-001",
+  "causationId": "message-000",
+  "operationId": "operation-001",
+  "data": {
+    "refundId": "refund-001",
+    "paymentId": "payment-001",
+    "chargeId": "charge-001",
+    "quoteId": "quote-001",
+    "quoteVersion": 1,
+    "amountInCents": 5001,
+    "currency": "BRL",
+    "providerOrderId": "ORDAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "providerRefundId": "REFBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "cancelOperationId": "cancel-001"
+  }
+}

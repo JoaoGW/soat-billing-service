@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://soat.example/contracts/messages/billing.charge-failed.v1.schema.json",
+  "allOf": [
+    {
+      "$ref": "https://soat.example/contracts/messages/envelope.v1.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "billing.charge-failed.v1"
+        },
+        "producer": {
+          "const": "soat-billing-service"
+        },
+        "data": {
+          "type": "object",
+          "required": [
+            "quoteId",
+            "quoteVersion",
+            "chargeId",
+            "reservationId",
+            "reasonCode"
+          ],
+          "properties": {
+            "quoteId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "quoteVersion": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "chargeId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reservationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reasonCode": {
+              "enum": [
+                "EXPIRED"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

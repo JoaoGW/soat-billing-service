@@ -10,16 +10,253 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm run db:generate
       - run: npm run lint
+      - run: npm run quality:sonarjs
       - run: npm run build
+      - run: npm run test:observability-local
+      - run: npm run test:metadata-compat
       - run: npm run test:cov -- --watchman=false
+      - run: npm run test:coverage-infrastructure -- --watchman=false
+      - name: Publicar resumo de cobertura
+        run: node scripts/quality/coverage-summary.cjs coverage/coverage-summary.json Serviço coverage/infrastructure/coverage-summary.json Infraestrutura
+      - name: SonarQube Cloud (quality gate bloqueante)
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - run: npm run test:contracts
+      - run: npm run test:delivery
       - run: kubectl kustomize deploy/kustomize/overlays/hml > /tmp/service-hml.yaml
       - uses: actions/upload-artifact@v4
         with:
-          name: coverage
+          name: billing-coverage-${{ github.sha }}
           path: coverage/
+          if-no-files-found: error
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: billing_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d billing_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://test_user:test_password@localhost:5432/billing_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run db:generate
+      - run: npm run db:migrate:deploy
+      - run: npm run build
+      - run: npm run test:integration
+      - name: Cobertura de integração do cancelamento de cobrança
+        run: >-
+          npm run test:integration -- cancelar-cobranca.integration.ts --coverage
+          --collectCoverageFrom=src/application/cancelar-cobranca.ts
+          --coverageDirectory=coverage/cancel-charge-integration
+          --coverageThreshold='{"global":{"statements":80,"branches":80,"functions":80,"lines":80}}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: billing-cancel-charge-integration-${{ github.sha }}
+          path: coverage/cancel-charge-integration/
+          if-no-files-found: error
+      - name: Validar imagens de runtime e migração
+        run: |
+          docker build --target runtime -t billing-runtime-ci:${{ github.sha }} .
+          docker build --target migration -t billing-migration-ci:${{ github.sha }} .
+          docker run --rm --network host -e DATABASE_URL --entrypoint node billing-runtime-ci:${{ github.sha }} -e 'const {PrismaClient}=require("@prisma/client");for(const m of ["@azure/identity","@azure/service-bus","@opentelemetry/sdk-node","nodemailer"])require(m);for(const m of ["prisma","@prisma/config","deepmerge-ts"]){try{require.resolve(m);throw Error(m+" presente no runtime")}catch(e){if(e.code!=="MODULE_NOT_FOUND")throw e}}const p=new PrismaClient();Promise.all([p.quote.count(),p.billingRecoveryAudit.count()]).then(()=>console.log("PostgreSQL e auditoria acessíveis")).catch(e=>{console.error(e.message);process.exitCode=1}).finally(()=>p.$disconnect())'
+          docker run --rm --network host -e DATABASE_URL --entrypoint ./node_modules/.bin/prisma billing-migration-ci:${{ github.sha }} migrate status --schema prisma/schema.prisma
+          if output="$(docker run --rm --entrypoint node billing-runtime-ci:${{ github.sha }} scripts/operations/recover-outbox.cjs 2>&1)"; then
+            echo 'Recuperação não deveria executar sem habilitação'; exit 1
+          fi
+          [[ "$output" == *'Recuperação recusada ou indisponível'* ]] || { echo 'Ferramenta ausente ou inválida'; exit 1; }
+          if output="$(docker run --rm --entrypoint node billing-runtime-ci:${{ github.sha }} scripts/operations/recover-quote-dlq.cjs 2>&1)"; then
+            echo 'Recuperação da DLQ não deveria executar sem habilitação'; exit 1
+          fi
+          [[ "$output" == *'Recuperação recusada ou indisponível'* ]] || { echo 'Ferramenta de DLQ ausente ou inválida'; exit 1; }
+          for recovery in evidence refund charge cancel-charge; do
+            if output="$(docker run --rm --entrypoint node billing-runtime-ci:${{ github.sha }} "scripts/operations/recover-${recovery}-dlq.cjs" 2>&1)"; then
+              echo 'Recuperação da DLQ não deveria executar sem habilitação'; exit 1
+            fi
+            [[ "$output" == *'Recuperação recusada ou indisponível'* ]] || { echo 'Ferramenta de DLQ ausente ou inválida'; exit 1; }
+          done
+          docker run -d --network host --name billing-runtime-ci -e DATABASE_URL billing-runtime-ci:${{ github.sha }}
+          trap 'docker rm -f billing-runtime-ci >/dev/null' EXIT
+          curl -fsS --retry 20 --retry-delay 1 --retry-all-errors http://127.0.0.1:3000/health
+  deploy_kind:
+    name: Deploy Kubernetes (kind)
+    needs: [quality, integration]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLUSTER: soat-billing
+      NAMESPACE: soat-kind
+      IMAGE: ghcr.io/joaogw/soat-billing-service:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir imagens do SHA avaliado
+        run: |
+          docker build --target runtime -t "$IMAGE" .
+          docker build --target migration -t "$IMAGE-migration" .
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+      - name: Carregar imagens e criar secrets efêmeros
+        run: |
+          kind load docker-image "$IMAGE" "$IMAGE-migration" --name "$CLUSTER"
+          db_password="$(openssl rand -hex 24)"
+          jwt_secret="$(openssl rand -hex 32)"
+          echo "::add-mask::$db_password"
+          echo "::add-mask::$jwt_secret"
+          echo "JWT_CLIENT_SECRET=$jwt_secret" >> "$GITHUB_ENV"
+          database_url="postgresql://billing:${db_password}@billing-postgres:5432/billing_kind"
+          kubectl create namespace "$NAMESPACE"
+          kubectl -n "$NAMESPACE" create secret generic billing-postgres \
+            --from-literal=POSTGRES_USER=billing --from-literal=POSTGRES_PASSWORD="$db_password" --from-literal=POSTGRES_DB=billing_kind
+          kubectl -n "$NAMESPACE" create secret generic soat-billing-migration --from-literal=DATABASE_URL="$database_url"
+          kubectl -n "$NAMESPACE" create secret generic soat-billing-runtime \
+            --from-literal=DATABASE_URL="$database_url" --from-literal=JWT_CLIENT_SECRET="$jwt_secret" \
+            --from-literal=OTEL_SERVICE_VERSION="$GITHUB_SHA"
+      - name: Aplicar banco, migration e Deployment do SHA
+        run: |
+          kubectl kustomize deploy/kustomize/overlays/kind | sed "s/sha-not-set/$GITHUB_SHA/g" > "$RUNNER_TEMP/rendered.yaml"
+          if grep -q 'sha-not-set' "$RUNNER_TEMP/rendered.yaml"; then echo 'Manifesto incompleto'; exit 1; fi
+          kubectl apply -f "$RUNNER_TEMP/rendered.yaml" -l app.kubernetes.io/component=database
+          kubectl -n "$NAMESPACE" rollout status deployment/billing-postgres --timeout=180s
+          kubectl apply -f "$RUNNER_TEMP/rendered.yaml" -l app.kubernetes.io/component=migration
+          kubectl -n "$NAMESPACE" wait --for=condition=complete job/soat-billing-migrate --timeout=180s
+          kubectl apply -f "$RUNNER_TEMP/rendered.yaml" -l '!app.kubernetes.io/component'
+          kubectl -n "$NAMESPACE" rollout status deployment/soat-billing-service --timeout=180s
+      - name: Validar serviço implantado
+        run: |
+          deployed="$(kubectl -n "$NAMESPACE" get deployment soat-billing-service -o jsonpath='{.spec.template.spec.containers[0].image}')"
+          [[ "$deployed" == "$IMAGE" ]] || { echo "Imagem inesperada: $deployed"; exit 1; }
+          kubectl -n "$NAMESPACE" port-forward service/soat-billing-service 18080:80 >/dev/null 2>&1 &
+          trap 'kill %1' EXIT
+          curl -fsS --retry 20 --retry-delay 1 --retry-all-errors http://127.0.0.1:18080/health
+          token="$(node -e 'const c=require("node:crypto");const b=o=>Buffer.from(JSON.stringify(o)).toString("base64url");const now=Math.floor(Date.now()/1e3);const h=b({alg:"HS256",typ:"JWT"});const p=b({sub:"cliente-kind",role:"cliente",iss:"soat-auth-function",aud:"soat-api",iat:now,exp:now+300});process.stdout.write(h+"."+p+"."+c.createHmac("sha256",process.env.JWT_CLIENT_SECRET).update(h+"."+p).digest("base64url"))')"
+          quote="$(cat /proc/sys/kernel/random/uuid)"
+          [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:18080/orcamentos/$quote")" == '401' ]]
+          [[ "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "http://127.0.0.1:18080/orcamentos/$quote")" == '404' ]]
+          {
+            echo '### Billing implantado no Kubernetes (kind)'
+            echo "- Imagem: \`$deployed\`"
+            echo '- Migration do banco próprio concluída antes do rollout'
+            echo '- `/health` 200, rota sem token 401 e consulta autenticada ao PostgreSQL 404'
+            echo '```'
+            kubectl -n "$NAMESPACE" get deployments,pods,jobs,services -o wide
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Diagnóstico do cluster
+        if: failure()
+        run: |
+          kubectl -n "$NAMESPACE" get all,jobs -o wide || true
+          kubectl -n "$NAMESPACE" describe pods || true
+          kubectl -n "$NAMESPACE" logs -l app=soat-billing-service --tail=200 || true
+          kubectl -n "$NAMESPACE" logs job/soat-billing-migrate --tail=200 || true
+  publish:
+    name: Publicar imagens Billing aprovadas
+    needs: [quality, integration, deploy_kind]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/development' && vars.HML_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          push: true
+          tags: ghcr.io/joaogw/soat-billing-service:${{ github.sha }}
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: migration
+          push: true
+          tags: ghcr.io/joaogw/soat-billing-service:${{ github.sha }}-migration
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+  deploy_hml:
+    name: Deploy Billing HML
+    needs: publish
+    runs-on: ubuntu-latest
+    environment: hml
+    concurrency:
+      group: billing-deploy-hml
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Impedir deploy de revisão ultrapassada
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPROVED_SHA: ${{ github.sha }}
+        run: |
+          current="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/development" --jq '.object.sha')"
+          [[ "$current" == "$APPROVED_SHA" && "$(git rev-parse HEAD)" == "$APPROVED_SHA" ]] || { echo 'A branch avançou ou o checkout não corresponde ao CI'; exit 1; }
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: azure/use-kubelogin@v1
+      - name: Preparar cluster e validar pré-requisitos
+        env:
+          AKS_RESOURCE_GROUP: ${{ vars.AKS_RESOURCE_GROUP }}
+          AKS_NAME: ${{ vars.AKS_NAME }}
+        run: |
+          az aks get-credentials --resource-group "$AKS_RESOURCE_GROUP" --name "$AKS_NAME" --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+          kubectl -n hml get secret soat-ghcr-pull soat-billing-runtime soat-billing-migration >/dev/null
+          kubectl -n hml get serviceaccount soat-billing-migrator >/dev/null
+      - name: Migrar banco próprio antes do rollout
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          [[ "$IMAGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          job="billing-migrate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          kubectl -n hml create job "$job" --image="ghcr.io/joaogw/soat-billing-service:${IMAGE_SHA}-migration" --dry-run=client -o json > "$RUNNER_TEMP/job.json"
+          python3 -c 'import json,sys; p=sys.argv[1]; j=json.load(open(p)); j["spec"]["backoffLimit"]=0; j["spec"]["ttlSecondsAfterFinished"]=86400; t=j["spec"]["template"]; t.setdefault("metadata",{}).setdefault("labels",{})["azure.workload.identity/use"]="true"; s=t["spec"]; s["serviceAccountName"]="soat-billing-migrator"; s["imagePullSecrets"]=[{"name":"soat-ghcr-pull"}]; s["containers"][0]["envFrom"]=[{"secretRef":{"name":"soat-billing-migration"}}]; json.dump(j,open(p,"w"))' "$RUNNER_TEMP/job.json"
+          kubectl apply -f "$RUNNER_TEMP/job.json"
+          kubectl -n hml wait --for=condition=complete "job/$job" --timeout=300s
+      - name: Aplicar exatamente a imagem do SHA aprovado
+        env:
+          WORKLOAD_CLIENT_ID: ${{ vars.BILLING_WORKLOAD_CLIENT_ID }}
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          [[ "$WORKLOAD_CLIENT_ID" =~ ^[0-9a-fA-F-]{36}$ ]]
+          [[ "$IMAGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          kubectl kustomize deploy/kustomize/overlays/hml > "$RUNNER_TEMP/rendered.yaml"
+          sed -i "s/__WORKLOAD_CLIENT_ID__/$WORKLOAD_CLIENT_ID/g; s/sha-not-set/$IMAGE_SHA/g" "$RUNNER_TEMP/rendered.yaml"
+          if grep -Eq '__WORKLOAD_CLIENT_ID__|sha-not-set' "$RUNNER_TEMP/rendered.yaml"; then echo 'Manifesto incompleto'; exit 1; fi
+          kubectl apply -f "$RUNNER_TEMP/rendered.yaml"
+          kubectl -n hml rollout status deployment/soat-billing-service --timeout=300s
