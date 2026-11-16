@@ -298,7 +298,7 @@ Jaeger, Prometheus e Grafana sem custo e encaminha ao New Relic quando a chave
 existe. O workflow do soat-api confirma no Jaeger um único trace atravessando
 OS, Billing e Execution.
 
-O orçamento é enviado ao cliente por e-mail para aprovação (itens, total, validade e como aprovar) pelo worker de notificações (`ENABLE_NOTIFICATION_WORKER=true`). No kind o envio vai ao Mailpit do cluster (http://localhost:8025 com `scripts/kind/ambiente.sh portas`), sem TLS nem credenciais (`ALLOW_LOCAL_EMULATORS=true`); fora dele o SMTP exige TLS e autenticação.
+O orçamento é enviado ao cliente por e-mail para aprovação (itens, total, validade e como aprovar) pelo worker de notificações (`ENABLE_NOTIFICATION_WORKER=true`). No kind o envio vai ao Mailpit do cluster (http://localhost:8025 com `scripts/kind/ambiente.sh portas`), sem credenciais (`ALLOW_LOCAL_EMULATORS=true`); fora dele o SMTP exige TLS e autenticação.
 
 ## Observabilidade
 
