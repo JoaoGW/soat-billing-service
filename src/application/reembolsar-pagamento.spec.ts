@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { PrepareRefundService, SubmitRefundService } from './reembolsar-pagamento';
+import { PrepareRefundService, SubmitRefundService, RefundEvidenceMismatchError, provesRefundCompensation } from './reembolsar-pagamento';
 
 describe('reembolso seguro', () => {
   const input = { correlationId: 'correlation1', messageId: 'm1', operationId: 'op1', refundId: 'r1', paymentId: 'p1', osId: 'os1', sagaId: 's1', filialId: 'f1', cancelOperationId: 'cancel1', cancelEventId: 'event1', reason: 'SAGA_COMPENSATION' };
@@ -37,6 +37,30 @@ describe('reembolso seguro', () => {
     tx.inbox.findUnique.mockResolvedValue(null);
     await expect(prepare.execute(input)).rejects.toThrow('Cancelamento sem confirmação');
     expect(tx.refund.create).not.toHaveBeenCalled(); expect(provider.refund).not.toHaveBeenCalled();
+  });
+  const failed = { messageId: input.cancelEventId, type: 'execution.work-failed.v1', producer: 'soat-execution-service', operationId: input.cancelOperationId, osId: input.osId, sagaId: input.sagaId, filialId: input.filialId, data: { executionId: 'e1', reservationId: 'res1', reason: 'REPARO_INVIAVEL' } };
+  const withEvidence = (payload: unknown) => tx.inbox.findUnique.mockImplementation(async (query: { where: { consumer_messageId: { consumer: string } } }) => query.where.consumer_messageId.consumer === 'billing.compensation-evidence' ? { status: 'APPLIED', payload } : null);
+  it('aceita falha de execução da mesma Saga como evidência de estorno', async () => {
+    withEvidence(failed);
+    await expect(prepare.execute(input)).resolves.toMatchObject({ refundId: 'r1', cancelEventId: 'event1' });
+    expect(tx.refund.create).toHaveBeenCalledTimes(1); expect(provider.refund).not.toHaveBeenCalled();
+  });
+  it.each([
+    ['operação', { operationId: 'other' }], ['mensagem', { messageId: 'other' }], ['OS', { osId: 'other' }],
+    ['Saga', { sagaId: 'other' }], ['filial', { filialId: 'other' }], ['produtor', { producer: 'soat-os-service' }],
+  ])('bloqueia falha de execução com %s divergente', async (_label, change) => {
+    withEvidence({ ...failed, ...change });
+    await expect(prepare.execute(input)).rejects.toBeInstanceOf(RefundEvidenceMismatchError);
+    expect(tx.refund.create).not.toHaveBeenCalled();
+  });
+  it('mantém cancelamento já iniciado e tipos alheios fora do estorno', async () => {
+    const cancelled = { ...failed, type: 'execution.work-cancelled.v1', data: { outcome: 'CANCELLED' } };
+    expect(provesRefundCompensation(cancelled, input)).toBe(true);
+    expect(provesRefundCompensation({ ...cancelled, data: { outcome: 'ALREADY_STARTED' } }, input)).toBe(false);
+    expect(provesRefundCompensation({ ...failed, type: 'execution.work-started.v1' }, input)).toBe(false);
+    expect(provesRefundCompensation(null, input)).toBe(false);
+    withEvidence({ ...cancelled, data: { outcome: 'ALREADY_STARTED' } });
+    await expect(prepare.execute(input)).rejects.toBeInstanceOf(RefundEvidenceMismatchError);
   });
   it('solicita uma vez e aguarda confirmação canônica', async () => {
     await expect(submit.execute('op1')).resolves.toBe('PENDING_CONFIRMATION');

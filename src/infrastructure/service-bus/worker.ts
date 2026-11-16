@@ -13,7 +13,7 @@ import { PrepareChargeService } from '../../application/preparar-cobranca';
 import { SubmitChargeService } from '../../application/enviar-cobranca';
 import { MercadoPagoOrdersClient } from '../mercado-pago/orders-client';
 import { MessageSigner, MessageVerifier } from './message-signature';
-import { CompensationEvidenceConsumer, evidenceValidator } from './compensation-evidence';
+import { CompensationEvidenceConsumer, evidenceValidator, isCompensationEvidenceType } from './compensation-evidence';
 import { RefundCommandConsumer, RefundCommandProcessor, refundCommandValidator } from './refund-command';
 import { PrepareRefundService, SubmitRefundService, ConfirmRefundService } from '../../application/reembolsar-pagamento';
 import { ReconcileRefundService } from '../../application/reconciliar-reembolso';
@@ -88,10 +88,13 @@ export class BillingMessageWorker implements OnModuleInit, OnApplicationShutdown
       this.evidenceSubscription = evidenceReceiver.subscribe({ processMessage: async (message) => {
         const body: unknown = message.body;
         const type = body && typeof body === 'object' && 'type' in body ? body.type : undefined;
-        if (message.subject !== 'execution.work-cancelled.v1' && type !== 'execution.work-cancelled.v1') {
+        if (!isCompensationEvidenceType(message.subject) && !isCompensationEvidenceType(type)) {
           await evidenceReceiver.completeMessage(message); return;
         }
-        await evidenceConsumer.process(message, evidenceReceiver);
+        const persist = () => evidenceConsumer.process(message, evidenceReceiver);
+        // Só adota o traceparent de produtor autenticado; o consumidor envia o restante à DLQ.
+        if (!evidenceVerifier.verify(body, message.applicationProperties?.signature)) return persist();
+        return withMessageTrace(body, persist);
       }, processError: async (args) => { this.logger.error(`Falha ao receber evidência: ${args.errorSource}`); } }, { autoCompleteMessages: false, maxConcurrentCalls: 1 });
     }
     this.dispatcher = new OutboxDispatcher(this.prisma, new ServiceBusEventPublisher(this.sender, signer));
