@@ -27,4 +27,16 @@ describe('evidência autenticada de cancelamento', () => {
     expect(receiver.deadLetterMessage).toHaveBeenCalledTimes(1);
     expect((await db.inbox.findUnique({ where: { consumer_messageId: { consumer: 'billing.compensation-evidence', messageId: body.messageId as string } } }))?.payload).toEqual(body);
   });
+  it('persiste falha de execução assinada na mesma inbox e recusa subject trocado', async () => {
+    const example = JSON.parse(readFileSync(resolve(process.cwd(), 'docs/contracts/messages/examples/execution.work-failed.v1.json'), 'utf8')) as Record<string, unknown>;
+    const body = { ...example, messageId: randomUUID(), operationId: randomUUID() };
+    const message = { body, messageId: body.messageId, subject: 'execution.work-failed.v1', applicationProperties: { signature: signer.sign(body) } } as unknown as ServiceBusReceivedMessage;
+    const settle = { completeMessage: jest.fn().mockResolvedValue(undefined), abandonMessage: jest.fn().mockResolvedValue(undefined), deadLetterMessage: jest.fn().mockResolvedValue(undefined) };
+    await handler.process({ ...message, subject: 'execution.work-cancelled.v1' } as ServiceBusReceivedMessage, settle as unknown as ServiceBusReceiver);
+    expect(settle.deadLetterMessage).toHaveBeenCalledTimes(1);
+    await handler.process(message, settle as unknown as ServiceBusReceiver); await handler.process(message, settle as unknown as ServiceBusReceiver);
+    expect(settle.completeMessage).toHaveBeenCalledTimes(2);
+    const evidence = await db.inbox.findUniqueOrThrow({ where: { consumer_messageId: { consumer: 'billing.compensation-evidence', messageId: body.messageId as string } } });
+    expect(evidence).toMatchObject({ status: 'APPLIED', type: 'execution.work-failed.v1', operationId: body.operationId, payload: body });
+  });
 });

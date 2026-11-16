@@ -1,6 +1,8 @@
 import { RefundCommandConsumer, RefundCommandProcessor, refundCommandValidator } from '../../src/infrastructure/service-bus/refund-command';
 import { ServiceBusReceivedMessage, ServiceBusReceiver } from '@azure/service-bus';
-import { randomUUID, randomInt } from 'node:crypto';
+import { randomUUID, randomInt, generateKeyPairSync } from 'node:crypto';
+import { CompensationEvidenceConsumer, evidenceValidator } from '../../src/infrastructure/service-bus/compensation-evidence';
+import { MessageSigner, MessageVerifier } from '../../src/infrastructure/service-bus/message-signature';
 import { PrismaClient } from '@prisma/client';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -151,6 +153,52 @@ describe('reembolso em PostgreSQL com provedor simulado', () => {
     expect(events).toHaveLength(1);
     const dir = resolve(process.cwd(), 'docs/contracts/messages'); const ajv = new Ajv(); addFormats(ajv); ajv.addSchema(JSON.parse(readFileSync(resolve(dir, 'envelope.schema.json'), 'utf8')));
     expect(ajv.validate(JSON.parse(readFileSync(resolve(dir, 'billing.refund-blocked.v1.schema.json'), 'utf8')), events[0].payload)).toBe(true);
+  });
+
+  // Evidência real: falha de execução assinada, validada e persistida pelo consumidor de evidência.
+  async function storeWorkFailed(x: Awaited<ReturnType<typeof setup>>, change: Record<string, unknown> = {}) {
+    await db.inbox.delete({ where: { consumer_messageId: { consumer: 'billing.compensation-evidence', messageId: x.input.cancelEventId } } });
+    const keys = generateKeyPairSync('ed25519');
+    const signer = new MessageSigner(keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString());
+    const verifier = new MessageVerifier(keys.publicKey.export({ type: 'spki', format: 'pem' }).toString(), 'soat-execution-service');
+    const example = JSON.parse(readFileSync(resolve(process.cwd(), 'docs/contracts/messages/examples/execution.work-failed.v1.json'), 'utf8')) as Record<string, unknown>;
+    const evidence = { ...example, messageId: x.input.cancelEventId, operationId: x.input.cancelOperationId, osId: x.input.osId, sagaId: x.input.sagaId, filialId: x.input.filialId, ...change };
+    const receiver = { completeMessage: jest.fn(), abandonMessage: jest.fn(), deadLetterMessage: jest.fn() };
+    await new CompensationEvidenceConsumer(db, verifier, evidenceValidator(resolve(process.cwd(), 'docs/contracts/messages'))).process({ body: evidence, messageId: evidence.messageId, subject: 'execution.work-failed.v1', applicationProperties: { signature: signer.sign(evidence) } } as unknown as ServiceBusReceivedMessage, receiver as unknown as ServiceBusReceiver);
+    expect(receiver.completeMessage).toHaveBeenCalledTimes(1);
+  }
+  function refundCommand(x: Awaited<ReturnType<typeof setup>>) {
+    return { messageId: x.input.messageId, operationId: x.input.operationId, correlationId: x.input.correlationId, osId: x.input.osId, sagaId: x.input.sagaId, filialId: x.input.filialId, type: 'billing.refund-payment.v1', schemaVersion: 1, occurredAt: '2030-01-01T00:00:00Z', producer: 'soat-os-service', aggregateType: 'saga', aggregateId: x.input.sagaId, aggregateVersion: 1, causationId: 'cause', data: { refundId: x.input.refundId, paymentId: x.input.paymentId, cancelOperationId: x.input.cancelOperationId, cancelEventId: x.input.cancelEventId, reason: 'EXECUTION_FAILED' } };
+  }
+  it('estorna pagamento quando a evidência é falha de execução da mesma Saga', async () => {
+    const x = await setup(); await storeWorkFailed(x);
+    const body = refundCommand(x);
+    const validate = refundCommandValidator(resolve(process.cwd(), 'docs/contracts/messages')); const receiver = { completeMessage: jest.fn(), abandonMessage: jest.fn(), deadLetterMessage: jest.fn() };
+    await new RefundCommandConsumer(db, validate).process({ body, messageId: body.messageId } as unknown as ServiceBusReceivedMessage, receiver as unknown as ServiceBusReceiver);
+    expect(receiver.completeMessage).toHaveBeenCalledTimes(1);
+    const refundedOrder = { ...x.order, status: 'refunded', transactions: { payments: [{ ...x.order.transactions.payments[0], status: 'refunded', refunded_amount: '50.01' }], refunds: [{ id: x.providerRefundId, transaction_id: x.order.transactions.payments[0].id, status: 'processed', amount: '50.01' }] } };
+    const provider = { get: jest.fn().mockResolvedValueOnce(x.order).mockResolvedValue(refundedOrder), refund: jest.fn().mockResolvedValue(x.response) };
+    const processor = new RefundCommandProcessor(db, prepare, new SubmitRefundService(db, provider), new ConfirmRefundService(db, provider), validate);
+    positionBefore(processor, body.messageId);
+    expect(await processor.processOne()).toBe('REFUNDED');
+    expect(provider.refund).toHaveBeenCalledTimes(1);
+    expect((await db.inbox.findUniqueOrThrow({ where: { consumer_messageId: { consumer: 'billing.refund-staging', messageId: body.messageId } } })).status).toBe('REFUNDED');
+    const events = await db.outbox.findMany({ where: { type: 'billing.payment-refunded.v1', payload: { path: ['sagaId'], equals: x.input.sagaId } } });
+    expect(events).toHaveLength(1); expect(events[0].payload).toMatchObject({ data: { cancelOperationId: x.input.cancelOperationId } });
+  });
+  it('bloqueia estorno quando a falha de execução pertence a outra Saga', async () => {
+    const x = await setup(); await storeWorkFailed(x, { sagaId: `other-${x.input.sagaId}` });
+    const body = refundCommand(x);
+    const validate = refundCommandValidator(resolve(process.cwd(), 'docs/contracts/messages')); const receiver = { completeMessage: jest.fn(), abandonMessage: jest.fn(), deadLetterMessage: jest.fn() };
+    await new RefundCommandConsumer(db, validate).process({ body, messageId: body.messageId } as unknown as ServiceBusReceivedMessage, receiver as unknown as ServiceBusReceiver);
+    const provider = { get: jest.fn(), refund: jest.fn() };
+    const processor = new RefundCommandProcessor(db, prepare, new SubmitRefundService(db, provider), new ConfirmRefundService(db, provider), validate);
+    positionBefore(processor, body.messageId);
+    expect(await processor.processOne()).toBe('RECONCILIACAO_NECESSARIA');
+    expect(await db.refund.count({ where: { paymentId: x.input.paymentId } })).toBe(0);
+    expect(provider.get).not.toHaveBeenCalled(); expect(provider.refund).not.toHaveBeenCalled();
+    const incidents = await db.outbox.findMany({ where: { type: 'billing.refund-blocked.v1', payload: { path: ['sagaId'], equals: x.input.sagaId } } });
+    expect(incidents).toHaveLength(1); expect(incidents[0].payload).toMatchObject({ data: { reasonCode: 'EVIDENCE_MISMATCH' } });
   });
 
   it('avisa resultado incerto e confirma depois sem repetir o pedido ao provedor', async () => {

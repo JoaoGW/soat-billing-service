@@ -23,7 +23,7 @@ async function main() {
     try {
       const consumer = new CompensationEvidenceConsumer(db, verifier, validate);
       await new RecoverBillingEvidenceDlq(db, verifier, validate, consumer).execute(message, settlement, { messageId: env.BILLING_DLQ_MESSAGE_ID, actor: env.BILLING_DLQ_ACTOR, reasonCode: env.BILLING_DLQ_REASON });
-      process.stdout.write('Evidência de cancelamento recuperada.\n');
+      process.stdout.write('Evidência de compensação recuperada.\n');
     } catch (error) {
       if (!settlementAttempted) await receiver.abandonMessage(message);
       throw error;

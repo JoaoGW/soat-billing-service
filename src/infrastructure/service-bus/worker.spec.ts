@@ -9,6 +9,8 @@ import { BillingMessageWorker } from './worker';
 import { RefundCommandProcessor } from './refund-command';
 import { ReconcileRefundService } from '../../application/reconciliar-reembolso';
 import { CancelChargeCommandProcessor } from './cancel-charge-command';
+import { CompensationEvidenceConsumer } from './compensation-evidence';
+import * as messageTrace from '../observability/message-trace';
 
 jest.mock('@azure/identity');
 jest.mock('@azure/service-bus');
@@ -133,6 +135,24 @@ describe('BillingMessageWorker', () => {
     await handlers.processMessage(forged);
     expect(receiver.deadLetterMessage).toHaveBeenCalledWith(forged, expect.objectContaining({ deadLetterReason: 'InvalidEvidence' }));
     await worker.onApplicationShutdown();
+  });
+  it('encaminha falha de execução à evidência e rastreia somente produtor autenticado', async () => {
+    Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_BILLING_COMPENSATION_EVIDENCE: 'true', EXECUTION_MESSAGE_PUBLIC_KEY: publicKey, SERVICE_BUS_BILLING_EVIDENCE_SUBSCRIPTION: 'billing-evidence', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
+    const persist = jest.spyOn(CompensationEvidenceConsumer.prototype, 'process').mockResolvedValue(undefined);
+    const traced = jest.spyOn(messageTrace, 'withMessageTrace');
+    const worker = new BillingMessageWorker(); worker.onModuleInit();
+    const handlers = receiver.subscribe.mock.calls[0][0] as { processMessage(message: unknown): Promise<void> };
+    const body = { type: 'execution.work-failed.v1', producer: 'soat-execution-service', traceparent: '00-0123456789abcdef0123456789abcdef-0123456789abcdef-01' };
+    const failed = { subject: body.type, body, applicationProperties: { signature: signer.sign(body) } };
+    await handlers.processMessage(failed);
+    expect(persist).toHaveBeenCalledWith(failed, receiver);
+    expect(traced).toHaveBeenCalledWith(body, expect.any(Function));
+    const typedOnly = { body, applicationProperties: { signature: 'invalid' } };
+    await handlers.processMessage(typedOnly);
+    expect(persist).toHaveBeenCalledWith(typedOnly, receiver);
+    expect(traced).toHaveBeenCalledTimes(1);
+    expect(receiver.completeMessage).not.toHaveBeenCalled();
+    await worker.onApplicationShutdown(); persist.mockRestore(); traced.mockRestore();
   });
   it('reconcilia reembolsos pendentes somente quando habilitado e atualiza staging confirmado', async () => {
     Object.assign(process.env, { ENABLE_SERVICE_BUS_WORKER: 'true', ENABLE_BILLING_COMPENSATION_EVIDENCE: 'true', ENABLE_MERCADO_PAGO_REFUND_COMMANDS: 'true', ENABLE_MERCADO_PAGO_REFUND_RECONCILIATION: 'true', MERCADO_PAGO_ACCESS_TOKEN: 'test-token', EXECUTION_MESSAGE_PUBLIC_KEY: publicKey, SERVICE_BUS_BILLING_EVIDENCE_SUBSCRIPTION: 'billing-evidence', SERVICE_BUS_NAMESPACE: 'example.servicebus.windows.net', SERVICE_BUS_COMMAND_QUEUE: 'billing.commands', SERVICE_BUS_EVENT_TOPIC: 'events', DATABASE_URL: 'postgresql://local/test', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_FEDERATED_TOKEN_FILE: '/tmp/token' });
