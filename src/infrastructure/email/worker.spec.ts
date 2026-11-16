@@ -36,7 +36,7 @@ describe('BillingNotificationWorker', () => {
     delete process.env.MAIL_USER; delete process.env.MAIL_PASS;
     const worker = new BillingNotificationWorker();
     worker.onModuleInit();
-    expect(nodemailer.createTransport).toHaveBeenCalledWith({ host: 'mailpit', port: 1025 });
+    expect(nodemailer.createTransport).toHaveBeenCalledWith({ host: 'mailpit', port: 1025, secure: false, requireTLS: false });
     await worker.onApplicationShutdown();
     delete process.env.ALLOW_LOCAL_EMULATORS;
     expect(() => new BillingNotificationWorker().onModuleInit()).toThrow('Configuração incompleta');

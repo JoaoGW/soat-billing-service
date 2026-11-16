@@ -18,14 +18,12 @@ export class BillingNotificationWorker implements OnModuleInit, OnApplicationShu
     if (process.env.ENABLE_NOTIFICATION_WORKER !== 'true') return;
     const { MAIL_HOST, MAIL_PORT, MAIL_USER, MAIL_PASS, MAIL_FROM, DATABASE_URL } = process.env;
     const port = Number(MAIL_PORT);
-    // No kind (ALLOW_LOCAL_EMULATORS=true) o e-mail vai ao Mailpit do cluster, sem autenticação; o
-    // nodemailer usa STARTTLS se o servidor oferecer.
+    // No kind (ALLOW_LOCAL_EMULATORS=true) o e-mail vai ao Mailpit do cluster.
     const localSmtp = process.env.ALLOW_LOCAL_EMULATORS === 'true';
     if (!MAIL_HOST || (!localSmtp && (!MAIL_USER || !MAIL_PASS)) || !MAIL_FROM || !DATABASE_URL || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Configuração incompleta do worker de notificações');
     this.prisma = new PrismaClient();
-    this.transport = nodemailer.createTransport(localSmtp
-      ? { host: MAIL_HOST, port }
-      : { host: MAIL_HOST, port, secure: port === 465, requireTLS: port !== 465, auth: { user: MAIL_USER, pass: MAIL_PASS } });
+    // TLS obrigatório fora do kind; o Mailpit local não oferece STARTTLS nem exige credenciais.
+    this.transport = nodemailer.createTransport({ host: MAIL_HOST, port, secure: port === 465, requireTLS: port !== 465 && !localSmtp, ...(localSmtp ? {} : { auth: { user: MAIL_USER, pass: MAIL_PASS } }) });
     this.dispatcher = new NotificationDispatcher(this.prisma, new SmtpQuoteNotifier(this.transport, MAIL_FROM));
     this.active = this.poll();
   }
