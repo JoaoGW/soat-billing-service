@@ -31,6 +31,16 @@ describe('BillingNotificationWorker', () => {
     delete process.env.MAIL_HOST;
     expect(() => new BillingNotificationWorker().onModuleInit()).toThrow('Configuração incompleta');
   });
+  it('usa o Mailpit do kind sem autenticação somente com ALLOW_LOCAL_EMULATORS', async () => {
+    Object.assign(process.env, { ENABLE_NOTIFICATION_WORKER: 'true', ALLOW_LOCAL_EMULATORS: 'true', MAIL_HOST: 'mailpit', MAIL_PORT: '1025', MAIL_FROM: 'oficina@kind.local', DATABASE_URL: 'postgresql://local/test' });
+    delete process.env.MAIL_USER; delete process.env.MAIL_PASS;
+    const worker = new BillingNotificationWorker();
+    worker.onModuleInit();
+    expect(nodemailer.createTransport).toHaveBeenCalledWith({ host: 'mailpit', port: 1025, secure: false, requireTLS: false });
+    await worker.onApplicationShutdown();
+    delete process.env.ALLOW_LOCAL_EMULATORS;
+    expect(() => new BillingNotificationWorker().onModuleInit()).toThrow('Configuração incompleta');
+  });
   it('exige TLS e fecha recursos ao encerrar', async () => {
     Object.assign(process.env, { ENABLE_NOTIFICATION_WORKER: 'true', MAIL_HOST: 'smtp.example.test', MAIL_PORT: '587', MAIL_USER: 'user', MAIL_PASS: 'secret', MAIL_FROM: 'office@example.test', DATABASE_URL: 'postgresql://local/test' });
     const worker = new BillingNotificationWorker();

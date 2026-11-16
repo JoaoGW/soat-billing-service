@@ -112,7 +112,7 @@ transação do estado.
 
 ## API REST
 
-A referência está em [`docs/openapi.yaml`](docs/openapi.yaml).
+A referência (Swagger/OpenAPI 3) está em [`docs/openapi.yaml`](docs/openapi.yaml) e a collection Postman do serviço em [`docs/postman/billing-service.postman_collection.json`](docs/postman/billing-service.postman_collection.json); a jornada completa pelos três serviços está na collection `docs/postman/fase4-microsservicos.postman_collection.json` do soat-api. O arquivo OpenAPI pode ser aberto no Swagger Editor ou importado no Postman.
 
 | Rota | Proteção |
 | --- | --- |
@@ -297,6 +297,8 @@ No kind, a telemetria do serviço vai ao OpenTelemetry Collector do cluster
 Jaeger, Prometheus e Grafana sem custo e encaminha ao New Relic quando a chave
 existe. O workflow do soat-api confirma no Jaeger um único trace atravessando
 OS, Billing e Execution.
+
+O orçamento é enviado ao cliente por e-mail para aprovação (itens, total, validade e como aprovar) pelo worker de notificações (`ENABLE_NOTIFICATION_WORKER=true`). No kind o envio vai ao Mailpit do cluster (http://localhost:8025 com `scripts/kind/ambiente.sh portas`), sem credenciais (`ALLOW_LOCAL_EMULATORS=true`); fora dele o SMTP exige TLS e autenticação.
 
 ## Observabilidade
 
