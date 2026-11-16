@@ -291,6 +291,13 @@ estiver desativada, o ambiente kind é o deploy automatizado verificável.
   assinatura Azure está desativada. Os manifests e o pipeline estão prontos;
   sem a variável, `publish` e `deploy_hml` são pulados.
 
+
+No kind, a telemetria do serviço vai ao OpenTelemetry Collector do cluster
+(`ALLOW_LOCAL_EMULATORS=true` permite HTTP e dispensa a chave), que alimenta
+Jaeger, Prometheus e Grafana sem custo e encaminha ao New Relic quando a chave
+existe. O workflow do soat-api confirma no Jaeger um único trace atravessando
+OS, Billing e Execution.
+
 ## Observabilidade
 
 Traces e métricas OpenTelemetry são exportados ao New Relic, como na Fase 3:

@@ -7,12 +7,16 @@ import { NodeSDK } from '@opentelemetry/sdk-node';
 
 export function startObservability(env: NodeJS.ProcessEnv = process.env): NodeSDK | undefined {
   if (env.OBSERVABILITY_ENABLED !== 'true') return undefined;
-  if (!env.NEW_RELIC_LICENSE_KEY) throw new Error('NEW_RELIC_LICENSE_KEY é obrigatória quando observabilidade está habilitada');
+  // No kind (ALLOW_LOCAL_EMULATORS=true) a telemetria vai ao OpenTelemetry Collector do
+  // próprio cluster, por HTTP e sem chave; o Collector encaminha ao New Relic quando houver chave.
+  const localCollector = env.ALLOW_LOCAL_EMULATORS === 'true';
+  if (!env.NEW_RELIC_LICENSE_KEY && !localCollector) throw new Error('NEW_RELIC_LICENSE_KEY é obrigatória quando observabilidade está habilitada');
   const endpoint = (env.OTEL_EXPORTER_OTLP_ENDPOINT ?? 'https://otlp.nr-data.net:4318').replace(/\/$/, '');
   let parsed: URL;
   try { parsed = new URL(endpoint); } catch { throw new Error('Endpoint OTLP inválido'); }
-  if (parsed.username || parsed.password || parsed.search || parsed.hash || (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)))) throw new Error('Endpoint OTLP deve usar HTTPS ou loopback local');
-  const headers = { 'api-key': env.NEW_RELIC_LICENSE_KEY };
+  const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+  if (parsed.username || parsed.password || parsed.search || parsed.hash || (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && (loopback || localCollector)))) throw new Error('Endpoint OTLP deve usar HTTPS, loopback local ou o Collector do ambiente local');
+  const headers: Record<string, string> = env.NEW_RELIC_LICENSE_KEY ? { 'api-key': env.NEW_RELIC_LICENSE_KEY } : {};
   const sdk = new NodeSDK({
     resource: resourceFromAttributes({ 'service.name': env.OTEL_SERVICE_NAME ?? 'soat-billing-service', 'service.version': env.OTEL_SERVICE_VERSION ?? 'local', 'deployment.environment.name': env.NODE_ENV ?? 'development' }),
     traceExporter: new OTLPTraceExporter({ url: `${endpoint}/v1/traces`, headers }),
