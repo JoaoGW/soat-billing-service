@@ -1,8 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { Notification, PrismaClient } from '@prisma/client';
 
+export interface QuoteMessage {
+  notificationId: string; recipient: string; quoteId: string; osId: string; version: number;
+  totalInCents: number; currency: string; expiresAt: Date;
+  items: Array<{ description: string; quantity: number; unitPriceInCents: number }>;
+}
+
 export interface QuoteNotifier {
-  send(message: { notificationId: string; recipient: string; quoteId: string; osId: string }): Promise<void>;
+  send(message: QuoteMessage): Promise<void>;
 }
 
 /** SMTP delivery is at least once; stable IDs do not guarantee recipient deduplication. */
@@ -24,13 +30,13 @@ export class NotificationDispatcher {
     const item = rows[0];
     if (!item) return 'EMPTY';
     try {
-      const quote = await this.prisma.quote.findUnique({ where: { id: item.quoteId }, select: { id: true, osId: true, status: true, expiresAt: true } });
+      const quote = await this.prisma.quote.findUnique({ where: { id: item.quoteId }, select: { id: true, osId: true, status: true, expiresAt: true, version: true, totalInCents: true, currency: true, items: { select: { description: true, quantity: true, unitPriceInCents: true } } } });
       if (!quote) throw new Error('Orçamento ausente');
       if (quote.status !== 'ISSUED' || quote.expiresAt <= now) {
         const result = await this.prisma.notification.updateMany({ where: { id: item.id, status: 'PENDING', claimOwner: owner }, data: { status: 'SKIPPED', claimOwner: null, claimUntil: null } });
         return result.count === 1 ? 'SKIPPED' : 'CLAIM_LOST';
       }
-      await this.notifier.send({ notificationId: item.id, recipient: item.recipient, quoteId: quote.id, osId: quote.osId });
+      await this.notifier.send({ notificationId: item.id, recipient: item.recipient, quoteId: quote.id, osId: quote.osId, version: quote.version, totalInCents: quote.totalInCents, currency: quote.currency, expiresAt: quote.expiresAt, items: quote.items });
     } catch {
       const attempts = item.attemptCount + 1;
       const failed = attempts >= 5;
