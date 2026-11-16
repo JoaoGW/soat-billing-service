@@ -20,6 +20,12 @@ describe('observabilidade do Billing', () => {
     expect(() => startObservability({ OBSERVABILITY_ENABLED: 'true', NEW_RELIC_LICENSE_KEY: 'x', OTEL_EXPORTER_OTLP_ENDPOINT: 'invalid' })).toThrow('inválido');
     expect(NodeSDK).not.toHaveBeenCalled();
   });
+  it('envia ao Collector do ambiente local sem chave somente com ALLOW_LOCAL_EMULATORS', () => {
+    expect(() => startObservability({ OBSERVABILITY_ENABLED: 'true', OTEL_EXPORTER_OTLP_ENDPOINT: 'http://otel-collector:4318' })).toThrow('NEW_RELIC_LICENSE_KEY');
+    expect(() => startObservability({ OBSERVABILITY_ENABLED: 'true', NEW_RELIC_LICENSE_KEY: 'x', OTEL_EXPORTER_OTLP_ENDPOINT: 'http://otel-collector:4318' })).toThrow('HTTPS');
+    startObservability({ OBSERVABILITY_ENABLED: 'true', ALLOW_LOCAL_EMULATORS: 'true', OTEL_EXPORTER_OTLP_ENDPOINT: 'http://otel-collector:4318/' });
+    expect(OTLPTraceExporter).toHaveBeenCalledWith({ url: 'http://otel-collector:4318/v1/traces', headers: {} });
+  });
   it('configura serviço, exportação e ocultação de dados em HTTP e SQL', () => {
     const sdk = startObservability({ OBSERVABILITY_ENABLED: 'true', NEW_RELIC_LICENSE_KEY: 'test-key', OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.test/', OTEL_SERVICE_VERSION: 'sha-test', NODE_ENV: 'test' });
     expect(resourceFromAttributes).toHaveBeenCalledWith(expect.objectContaining({ 'service.name': 'soat-billing-service', 'service.version': 'sha-test' }));

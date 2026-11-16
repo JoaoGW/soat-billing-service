@@ -18,6 +18,19 @@ describe('recuperação de evidência na DLQ', () => {
     expect(receiver.completeMessage).toHaveBeenCalledWith(message);
     expect(db.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(receiver.completeMessage.mock.invocationCallOrder[0]);
   });
+  it('recupera evidência de falha de execução pelo mesmo consumidor', async () => {
+    const failed = { ...body, type: 'execution.work-failed.v1' };
+    const failedMessage = { ...message, body: failed, subject: failed.type } as unknown as ServiceBusReceivedMessage;
+    await expect(service.execute(failedMessage, receiver as never, input)).resolves.toBe('APPLIED');
+    expect(db.billingRecoveryAudit.create).toHaveBeenCalledWith({ data: expect.objectContaining({ eventType: 'execution.work-failed.v1' }) });
+    expect(receiver.completeMessage).toHaveBeenCalledWith(failedMessage);
+  });
+  it('recusa tipo fora da evidência ou subject divergente do envelope', async () => {
+    const started = { ...body, type: 'execution.work-started.v1' };
+    await expect(service.execute({ ...message, body: started, subject: started.type } as unknown as ServiceBusReceivedMessage, receiver as never, input)).rejects.toThrow('incompatível');
+    await expect(service.execute({ ...message, subject: 'execution.work-failed.v1' } as unknown as ServiceBusReceivedMessage, receiver as never, input)).rejects.toThrow('incompatível');
+    expect(db.billingRecoveryAudit.create).not.toHaveBeenCalled();
+  });
   it('recusa assinatura, contrato e ID incorretos antes de auditar', async () => {
     verifier.verify.mockReturnValueOnce(false); await expect(service.execute(message, receiver as never, input)).rejects.toThrow();
     validate.mockReturnValueOnce(false); await expect(service.execute(message, receiver as never, input)).rejects.toThrow();

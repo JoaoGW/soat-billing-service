@@ -85,6 +85,13 @@ describe('cancelamento de cobrança com PostgreSQL', () => {
     await expect(prepare.execute(x.input)).rejects.toThrow('Evidência');
     expect((await db.charge.findUniqueOrThrow({ where: { id: x.input.chargeId } })).status).toBe('CREATED');
   });
+  it('recusa falha de execução como evidência de cancelamento de cobrança', async () => {
+    const x = await setup(); const prepare = new PrepareChargeCancellation(db);
+    await db.inbox.update({ where: { consumer_messageId: { consumer: 'billing.compensation-evidence', messageId: x.input.cancelEventId } }, data: { type: 'execution.work-failed.v1', payload: { messageId: x.input.cancelEventId, type: 'execution.work-failed.v1', producer: 'soat-execution-service', operationId: x.input.cancelOperationId, osId: x.input.osId, sagaId: x.input.sagaId, filialId: x.input.filialId, data: { executionId: 'execution', reservationId: x.input.reservationId, startedAt: '2030-01-01T00:00:00Z', failedAt: '2030-01-01T01:00:00Z', reason: 'REPARO_INVIAVEL' } } } });
+    await expect(prepare.execute(x.input)).rejects.toMatchObject({ reasonCode: 'CANCEL_EVIDENCE_MISMATCH' });
+    expect((await db.charge.findUniqueOrThrow({ where: { id: x.input.chargeId } })).status).toBe('CREATED');
+    expect(await db.commandOperation.count({ where: { consumer: 'billing.cancel-charge.v1', operationId: x.input.operationId } })).toBe(0);
+  });
   it('não cancela order já paga nem publica sucesso', async () => {
     const x = await setup(); await new PrepareChargeCancellation(db).execute(x.input);
     const provider = { get: jest.fn().mockResolvedValue({ ...x.order, status: 'processed' }), cancel: jest.fn() };

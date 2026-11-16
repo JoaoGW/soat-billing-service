@@ -9,7 +9,7 @@ autorizadas; Billing não acessa seus bancos.
 | --- | --- |
 | Criação em voo ou resposta incerta | Conferir intenção, chave da operação e notificação autenticada. Com ID e dados correspondentes, a reconciliação de cobrança consulta a order canônica; sem prova, manter pendência e não criar outra cobrança. |
 | Reembolso em voo ou incerto | Consultar order, transação, referência, valor, moeda e reembolso integral. O reconciliador só confirma correspondência única; não repete o pedido. Informação ausente ou divergente permanece em reconciliação. |
-| Comando de reembolso pendente | Conferir inbox de `billing.refund-staging` e evidência assinada de `execution.work-cancelled.v1`; sem confirmação de não início, não reembolsar. Erro de banco ou evidência divergente não autoriza chamar o provedor. |
+| Comando de reembolso pendente | Conferir inbox de `billing.refund-staging` e evidência assinada (`execution.work-cancelled.v1` com `CANCELLED` ou `execution.work-failed.v1` da mesma operação e Saga); sem essa evidência, não reembolsar. Erro de banco ou evidência divergente não autoriza chamar o provedor. |
 | Evidência divergente | `billing.refund-staging` fica em `RECONCILIACAO_NECESSARIA`, mesmo sem registro em `Refund`. Investigar os IDs e o estado físico com OS e Execution; não reenviar nem alterar a evidência para forçar estorno. A resolução operacional exige comprovação e procedimento específico. |
 | Reparo iniciado ou situação física incerta | Preservar reserva e estado financeiro; abrir incidente e consultar a equipe operacional. Não liberar estoque, nem iniciar estorno por timeout. |
 | Mensagem na DLQ | Conferir produtor, assinatura, schema, IDs e estado atual. Corrigir a causa e reenviar apenas pelo procedimento específico do consumidor, preservando IDs; não editar payloads. |
@@ -75,7 +75,8 @@ e encontrar comando e evidência compatíveis, ele poderá iniciar o fluxo de
 reembolso. Suspenda esse worker antes da operação caso seja necessária análise
 adicional. Não altere payloads ou identificadores para forçar uma compensação.
 
-Para uma evidência `execution.work-cancelled.v1` na DLQ da subscription, use
+Para uma evidência `execution.work-cancelled.v1` ou `execution.work-failed.v1`
+na DLQ da subscription, use
 `npm run ops:recover-evidence-dlq` e `ENABLE_BILLING_EVIDENCE_DLQ_RECOVERY=true`,
 com `EXECUTION_MESSAGE_PUBLIC_KEY`, `SERVICE_BUS_EVENT_TOPIC` e
 `SERVICE_BUS_BILLING_EVIDENCE_SUBSCRIPTION`. Para um comando

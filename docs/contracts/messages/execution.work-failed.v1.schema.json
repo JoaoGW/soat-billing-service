@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://soat.example/contracts/messages/execution.work-failed.v1.schema.json",
+  "allOf": [
+    {
+      "$ref": "https://soat.example/contracts/messages/envelope.v1.schema.json"
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "execution.work-failed.v1"
+        },
+        "producer": {
+          "const": "soat-execution-service"
+        },
+        "aggregateType": {
+          "const": "execution"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "executionId",
+            "reservationId",
+            "startedAt",
+            "failedAt",
+            "reason"
+          ],
+          "properties": {
+            "executionId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reservationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "startedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "failedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-zA-Z0-9_-]+$"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

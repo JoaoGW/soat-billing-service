@@ -51,13 +51,64 @@ eventos:
 | `billing.cancel-charge.v1` | `charge-canceled`, `charge-cancel-blocked` |
 | `billing.refund-payment.v1` | `payment-refunded`, `refund-blocked` |
 
-Na compensação, Billing exige evidência autenticada de que o reparo não começou
-(`execution.work-cancelled.v1`) antes de reembolsar. A cobrança sem pagamento é
-cancelada com intenção durável, uma única tentativa e consulta canônica.
+Na compensação, Billing exige evidência autenticada do Execution antes de
+reembolsar. Ela chega pela subscription `billing.evidence`, é verificada com a
+chave Ed25519 do Execution e o schema do tipo, e fica na inbox
+`billing.compensation-evidence`. Dois fatos são aceitos para o estorno:
+
+- `execution.work-cancelled.v1` com `outcome` `CANCELLED`: o reparo não começou;
+- `execution.work-failed.v1`: o reparo começou e o mecânico o declarou inviável.
+  As peças já foram consumidas, então a compensação é estornar o pagamento e
+  cancelar a OS. O comando `billing.refund-payment.v1` só é aplicado se o
+  evento vier de `soat-execution-service`, com `operationId` e `messageId`
+  iguais a `cancelOperationId` e `cancelEventId` e os mesmos `osId`, `sagaId` e
+  `filialId`.
+
+Evidência divergente não chama o provedor: o comando fica em reconciliação e
+Billing publica `refund-blocked` (`EVIDENCE_MISMATCH`). A cobrança sem pagamento
+é cancelada somente com `work-cancelled` `CANCELLED` (a falha do reparo só
+ocorre depois do pagamento), com intenção durável, uma única tentativa e
+consulta canônica.
 Transações locais são atômicas; resultados financeiros incertos (timeout,
 resposta perdida, dados divergentes) ficam em reconciliação e nunca repetem a
-mutação no provedor. Os schemas estão em
+mutação no provedor. Os schemas, com produtor e consumidor de cada um, estão em
 [`docs/contracts/messages`](docs/contracts/messages).
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant OS as OS (orquestrador)
+  participant B as Billing
+  participant C as Cliente
+  participant MP as Mercado Pago
+  participant EX as Execution
+  OS->>B: billing.generate-quote.v1
+  B-->>OS: billing.quote-issued.v1 (ou quote-failed)
+  C->>B: POST /orcamentos/:id/aprovar (JWT e Idempotency-Key)
+  B-->>OS: billing.quote-approved.v1 (ou quote-rejected)
+  OS->>B: billing.create-charge.v1
+  B->>MP: cria order QR com chave de idempotência
+  B-->>OS: billing.charge-created.v1 (ou charge-failed)
+  C->>MP: paga o QR
+  MP->>B: webhook assinado (HMAC)
+  B->>MP: consulta canônica da order
+  B-->>OS: billing.payment-confirmed.v1
+  alt Cancelamento antes do pagamento
+    EX-->>B: execution.work-cancelled.v1 CANCELLED (billing.evidence)
+    OS->>B: billing.cancel-charge.v1
+    B->>MP: cancela a order uma única vez
+    B-->>OS: billing.charge-canceled.v1 (ou charge-cancel-blocked)
+  else Pago e reparo não iniciado ou reparo falhou
+    EX-->>B: work-cancelled CANCELLED ou execution.work-failed.v1 (billing.evidence)
+    OS->>B: billing.refund-payment.v1 (cancelOperationId e cancelEventId)
+    B->>MP: solicita reembolso uma única vez
+    B-->>OS: billing.payment-refunded.v1 (ou refund-blocked)
+  end
+```
+
+Todas as setas de e para o OS passam pelo Service Bus (fila `billing.commands`
+e tópico `soat.domain.events`); os eventos do Billing saem pela outbox na mesma
+transação do estado.
 
 ## API REST
 
@@ -115,10 +166,19 @@ identidade de workload, `OS_MESSAGE_PUBLIC_KEY` e a chave privada exclusiva
 `BILLING_MESSAGE_PRIVATE_KEY`; comandos sem assinatura válida seguem à DLQ. A
 subscription de evidência (`ENABLE_BILLING_COMPENSATION_EVIDENCE=true`,
 `SERVICE_BUS_BILLING_EVIDENCE_SUBSCRIPTION` e `EXECUTION_MESSAGE_PUBLIC_KEY`)
-filtra `execution.work-cancelled.v1`; registrar a evidência não dispara
-reembolso. O worker SMTP (`ENABLE_NOTIFICATION_WORKER=true`) exige TLS e usa ID
-de mensagem estável. Os segredos devem vir do Key Vault; não compartilhe chaves
-privadas entre serviços.
+aceita `execution.work-cancelled.v1` e `execution.work-failed.v1`, confirma
+outros eventos do tópico sem processá-los e registra a evidência com o trace W3C
+do produtor autenticado; registrar a evidência não dispara reembolso. O worker
+SMTP (`ENABLE_NOTIFICATION_WORKER=true`) exige TLS e usa ID de mensagem estável.
+Todas as variáveis lidas pelo código estão em `.env.example`, com padrão seguro.
+
+Em Kubernetes os segredos não vêm de Key Vault: o Deployment recebe todas as
+variáveis do Secret `soat-billing-runtime` via `envFrom`, e o job de migration
+usa o Secret separado `soat-billing-migration` (só `DATABASE_URL`). No kind o CI
+cria esses Secrets com valores aleatórios a cada execução; no AKS eles devem
+existir previamente no namespace `hml` e o deploy falha se faltarem. O acesso
+ao Service Bus usa identidade de workload (ServiceAccount anotada), sem
+connection string. Não compartilhe chaves privadas entre serviços.
 
 ## Ambiente local com emuladores
 
@@ -152,17 +212,32 @@ distribuído do [OS](https://github.com/JoaoGW/soat-api#testes-cobertura-e-quali
 
 ### Evidência de cobertura
 
-Medição do [CI](https://github.com/JoaoGW/soat-billing-service/actions/workflows/ci.yml) no commit `4d6cd5e`, com gate mínimo de 80% em cada métrica:
+O gate mínimo é 80% em cada métrica (`coverageThreshold` em `jest.config.cjs`).
+Última medição local, com `npm run test:cov` e
+`npm run test:coverage-infrastructure` (47 suítes, 234 testes unitários):
 
 | Escopo | Statements | Branches | Functions | Lines |
 | --- | --- | --- | --- | --- |
-| Serviço | 87.70% | 82.34% | 88.41% | 92.89% |
-| Infraestrutura | 93.33% | 90.81% | 89.34% | 96.64% |
+| Serviço | 89.35% | 84.53% | 90.90% | 94.48% |
+| Infraestrutura | 93.61% | 91.21% | 90.69% | 96.63% |
 
-Cada execução publica os totais do próprio SHA no resumo do job e como anotação (`scripts/quality/coverage-summary.cjs`) e anexa o relatório completo como artefato.
+A suíte de integração no PostgreSQL tem 17 suítes e 55 testes; o gate do
+cancelamento de cobrança mede `cancelar-cobranca.ts` em 89.21% statements,
+82.08% branches, 100% functions e 100% lines.
+
+Os números de cada commit ficam no próprio CI, sem depender desta tabela:
+
+- job **quality**, passo **Publicar resumo de cobertura**
+  (`scripts/quality/coverage-summary.cjs`): tabela no resumo do job e anotações
+  com os totais do SHA;
+- artefato **`billing-coverage-<sha>`**: relatório completo (lcov, HTML e
+  `coverage-summary.json`) do serviço e da infraestrutura;
+- artefato `billing-cancel-charge-integration-<sha>` do job **integration**;
+- [SonarCloud](https://sonarcloud.io/dashboard?id=JoaoGW_soat-billing-service):
+  cobertura recebida de `coverage/lcov.info` e Quality Gate.
 
 A qualidade é verificada no **SonarQube Cloud**
-([painel do projeto](https://sonarcloud.io/project/overview?id=JoaoGW_soat-billing-service)): o CI
+([painel do projeto](https://sonarcloud.io/dashboard?id=JoaoGW_soat-billing-service)): o CI
 envia o código e a cobertura (`coverage/lcov.info`) e aguarda o Quality Gate *Sonar way*
 (confiabilidade, segurança, manutenibilidade, duplicação ≤ 3% e cobertura ≥ 80%
 no código novo); reprovação bloqueia o pipeline e o merge. Antes disso,
@@ -197,6 +272,31 @@ A `main` exige pull request e os checks. O deploy AKS usa OIDC
 `soat-billing-migrator`; runtime e migrations usam credenciais distintas e a
 migration do mesmo SHA roda antes do rollout. Enquanto a assinatura Azure
 estiver desativada, o ambiente kind é o deploy automatizado verificável.
+
+## Ambiente Kubernetes
+
+- **Deploy automatizado (kind)**: o job **Deploy Kubernetes (kind)** do
+  [CI](https://github.com/JoaoGW/soat-billing-service/actions/workflows/ci.yml)
+  roda em todo pull request e push. Ele cria um cluster kind efêmero no runner,
+  carrega as imagens do SHA, cria os Secrets, sobe o PostgreSQL próprio, roda o
+  job de migration antes do rollout e valida imagem, `/health`, 401 sem token e
+  404 autenticado. O resultado aparece no resumo do job.
+- **Fluxo distribuído completo**: o workflow
+  [**Fluxo completo em Kubernetes**](https://github.com/JoaoGW/soat-api/actions/workflows/fluxo-completo-kind.yml)
+  do `soat-api` sobe OS, Billing e Execution no kind, com broker e banco
+  emulados e provedor simulado, e exercita a jornada e as compensações. Ele
+  roda quando o repositório aceitou os termos dos emuladores
+  (`SOAT_ACCEPT_EULA=Y`).
+- **AKS (`deploy_hml`)**: continua atrás de `HML_DEPLOY_ENABLED` porque a
+  assinatura Azure está desativada. Os manifests e o pipeline estão prontos;
+  sem a variável, `publish` e `deploy_hml` são pulados.
+
+
+No kind, a telemetria do serviço vai ao OpenTelemetry Collector do cluster
+(`ALLOW_LOCAL_EMULATORS=true` permite HTTP e dispensa a chave), que alimenta
+Jaeger, Prometheus e Grafana sem custo e encaminha ao New Relic quando a chave
+existe. O workflow do soat-api confirma no Jaeger um único trace atravessando
+OS, Billing e Execution.
 
 ## Observabilidade
 
