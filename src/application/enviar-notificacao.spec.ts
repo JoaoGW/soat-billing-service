@@ -4,7 +4,7 @@ import { NotificationDispatcher, QuoteNotifier } from './enviar-notificacao';
 describe('NotificationDispatcher', () => {
   const now = new Date('2030-01-01T00:00:00Z');
   const item = { id: 'notification-1', quoteId: 'quote-1', recipient: 'cliente@example.test', attemptCount: 0 };
-  const quote = { id: 'quote-1', osId: 'os-1', status: 'ISSUED', expiresAt: new Date('2030-01-02T00:00:00Z') };
+  const quote = { id: 'quote-1', osId: 'os-1', status: 'ISSUED', expiresAt: new Date('2030-01-02T00:00:00Z'), version: 1, totalInCents: 1000, currency: 'BRL', items: [{ description: 'Peça', quantity: 2, unitPriceInCents: 500 }] };
   const prisma = { $queryRaw: jest.fn(), quote: { findUnique: jest.fn() }, notification: { updateMany: jest.fn() } };
   const notifier: QuoteNotifier = { send: jest.fn() };
   const dispatcher = new NotificationDispatcher(prisma as unknown as PrismaClient, notifier);
@@ -12,7 +12,7 @@ describe('NotificationDispatcher', () => {
 
   it('envia notificação apenas para orçamento vigente', async () => {
     await expect(dispatcher.dispatchOne(now)).resolves.toBe('SENT');
-    expect(notifier.send).toHaveBeenCalledWith({ notificationId: item.id, recipient: item.recipient, quoteId: quote.id, osId: quote.osId });
+    expect(notifier.send).toHaveBeenCalledWith({ notificationId: item.id, recipient: item.recipient, quoteId: quote.id, osId: quote.osId, version: 1, totalInCents: 1000, currency: 'BRL', expiresAt: quote.expiresAt, items: quote.items });
     expect(prisma.notification.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'SENT' }) }));
   });
   it('ignora orçamento decidido ou expirado', async () => {
